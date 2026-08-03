@@ -211,10 +211,9 @@ macOS with Metal:
 ./scripts/build-whisper.sh metal
 ```
 
-Download a model using whisper.cpp's model helper, then place it under the
-platform application data directory's `models/` folder. Model downloading and
-integrity verification are tracked in the roadmap rather than silently bundled
-into the app.
+Speech models are not bundled with the installer. Download one from **Voice →
+Compare and download models**; Quill stores it in the platform application-data
+`models/` folder and verifies its SHA-256 digest before making it available.
 
 ## Native desktop build
 
