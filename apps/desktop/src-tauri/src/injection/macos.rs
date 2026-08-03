@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use core_foundation::base::TCFType;
 use core_foundation::runloop::CFRunLoop;
 use std::ffi::c_void;
 

@@ -395,6 +395,7 @@ pub fn run() {
     };
 
     let shared_settings = Arc::new(RwLock::new(settings::load()));
+    #[cfg(windows)]
     let session_settings = Arc::clone(&shared_settings);
     let warmup_settings = Arc::clone(&shared_settings);
     let hotkey_capture = Arc::new(AtomicBool::new(false));

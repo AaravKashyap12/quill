@@ -240,8 +240,9 @@ impl WhisperServer {
             ))
             .arg("--no-language-probabilities")
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .creation_flags(CREATE_NO_WINDOW);
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
         if matches!(settings.backend, ComputeBackend::Cpu) {
             command.arg("--no-gpu");
         }
@@ -548,8 +549,6 @@ fn reserve_local_port() -> Result<u16> {
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-#[cfg(not(windows))]
-const CREATE_NO_WINDOW: u32 = 0;
 
 #[cfg(test)]
 mod tests {
