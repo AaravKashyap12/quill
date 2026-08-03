@@ -2,10 +2,13 @@ use crate::asr::{AsrPass, WhisperServer};
 use crate::audio::{AudioCapture, AudioSnapshot};
 use crate::cleanup;
 use crate::dictionary;
+use crate::downloads;
 use crate::hotkeys;
 use crate::injection;
 use crate::metrics;
-use crate::model::{AppSettings, HotkeyBehavior, HotkeyConfig, InjectionMode, Mode};
+use crate::model::{
+    AppSettings, ComputeBackend, HotkeyBehavior, HotkeyConfig, InjectionMode, Mode,
+};
 use crate::recovery;
 use crate::register::Register;
 use crate::streaming::{LocalAgreement, TimedWord};
@@ -69,26 +72,21 @@ async fn run(
     hotkey_capture: Arc<AtomicBool>,
 ) -> Result<()> {
     let startup_settings = read_settings(&shared_settings)?;
-    emit_status(
-        &app,
-        "processing",
-        None,
-        "Loading whisper.cpp on CUDA",
-        None,
-    );
+    emit_status(&app, "processing", None, "Loading whisper.cpp", None);
     let mut server = WhisperServer::start(&app, &startup_settings).await?;
     metrics::record(
         "whisperColdLoad",
         server.cold_load_ms,
         None,
-        Some("packaged CUDA server"),
+        Some(server.backend_name()),
     )?;
     // Snapshot the engine-affecting settings the running server was booted
     // with, so we can detect drift each loop iteration and hot-swap the
     // server when the user changes model or compute backend.
     let mut loaded_model = startup_settings.whisper_model.clone();
     let mut loaded_backend = startup_settings.backend;
-    emit_status(&app, "ready", None, "Ready", None);
+    let mut loaded_cuda_generation = downloads::cuda_runtime_generation(&app);
+    emit_status(&app, "ready", None, server.ready_message(), None);
     // Clear any low-bit key history left from before this process/server
     // started so tap-to-lock never begins recording on launch or restart.
     let _ = hotkeys::poll_pair(
@@ -111,8 +109,15 @@ async fn run(
         // NOT require a restart. Failure to load the new engine bubbles up
         // to the outer supervisor loop, which will retry with the old
         // settings once they're re-persisted.
+        let cuda_generation = downloads::cuda_runtime_generation(&app);
+        let cuda_pack_changed = matches!(
+            settings.backend,
+            ComputeBackend::Auto | ComputeBackend::Cuda
+        ) && cuda_generation != loaded_cuda_generation;
         if active.is_none()
-            && (settings.whisper_model != loaded_model || settings.backend != loaded_backend)
+            && (settings.whisper_model != loaded_model
+                || settings.backend != loaded_backend
+                || cuda_pack_changed)
         {
             emit_status(
                 &app,
@@ -125,7 +130,8 @@ async fn run(
             server = WhisperServer::start(&app, &settings).await?;
             loaded_model = settings.whisper_model.clone();
             loaded_backend = settings.backend;
-            emit_status(&app, "ready", None, "Ready", None);
+            loaded_cuda_generation = cuda_generation;
+            emit_status(&app, "ready", None, server.ready_message(), None);
         }
 
         // Text that could not be safely delivered while its editor was in
@@ -343,7 +349,7 @@ impl ActiveSession {
             app,
             "processing",
             Some(self.mode),
-            "Transcribing on CUDA",
+            server.activity_message(),
             (self.mode == Mode::Scribe).then_some(self.settings.cleanup_base_url.as_str()),
         );
         let pass = server.transcribe(&self.settings, &snapshot.samples).await?;

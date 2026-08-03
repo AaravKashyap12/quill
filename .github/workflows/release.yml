@@ -57,3 +57,21 @@ jobs:
           # latest.json, keeping updater archives and signatures paired.
           assetNamePattern: ${{ matrix.assetNamePattern }}
           args: ${{ matrix.args }}
+      - name: Upload optional CUDA runtime pack
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $assets = @(
+            "target/release-assets/quill-cuda-runtime-windows-x64.zip",
+            "target/release-assets/quill-cuda-runtime-windows-x64.zip.sha256"
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
+              throw "CUDA release asset is missing: $asset"
+            }
+          }
+          # Upload separately from tauri-action so these files cannot be
+          # mistaken for updater archives or added to latest.json.
+          gh release upload "${{ inputs.tag }}" $assets --clobber

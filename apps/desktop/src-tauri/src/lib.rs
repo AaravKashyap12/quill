@@ -516,6 +516,7 @@ pub fn run() {
             discard_recovery,
             list_audio_input_devices,
             list_installed_whisper_models,
+            downloads::get_cuda_runtime_status,
             preview_mode,
             set_hotkey_capture,
             review::get_scribe_review,
@@ -525,6 +526,9 @@ pub fn run() {
             downloads::download_whisper_model,
             downloads::cancel_whisper_download,
             downloads::delete_whisper_model,
+            downloads::download_cuda_runtime,
+            downloads::cancel_cuda_runtime_download,
+            downloads::delete_cuda_runtime,
             ollama::pull_ollama_model,
             ollama::cancel_ollama_pull
         ])

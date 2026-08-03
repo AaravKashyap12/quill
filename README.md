@@ -27,7 +27,8 @@ Quill is currently an **engineering preview**:
   by standalone tests.
 - The Tauri v2 shell, tray/updater/autostart configuration, settings UI,
   floating overlay, local-provider detection, hotkey polling, text injection,
-  recovery checkpoints, packaged CUDA whisper.cpp server, microphone capture,
+  recovery checkpoints, bundled CPU whisper.cpp server, optional CUDA runtime,
+  microphone capture,
   and Windows Dictation/Scribe session loop are in source.
 - Dictionary entries support spoken-word biasing and literal word/snippet
   replacement. Accepted Scribe edits can produce an optional dictionary
@@ -35,7 +36,7 @@ Quill is currently an **engineering preview**:
   and can be cleared from Dictionary settings.
 - The desktop React bundle builds successfully.
 - A native Windows production binary has been compiled and manually exercised
-  with the packaged CUDA runtime. The complete Notepad, VS Code, and Discord
+  with CUDA. The complete Notepad, VS Code, and Discord
   application matrix and macOS verification are still pending.
 
 This status is intentionally explicit: do not treat `v0.1.0` source as a
@@ -91,6 +92,7 @@ absent from the transcript.
   [docs/macos-testing.md](docs/macos-testing.md).
 - A microphone
 - About 75 MB–1.6 GB for a whisper.cpp model
+- Optional NVIDIA acceleration: about 700 MB to download and 1.25 GB installed
 - Optional Scribe provider:
   - [Ollama](https://ollama.com/)
   - LM Studio, Jan, or llama.cpp server exposing an OpenAI-compatible endpoint
@@ -158,7 +160,7 @@ scripts/
 | Layer | Choice | Why |
 | --- | --- | --- |
 | Desktop shell | Tauri v2 + React + TypeScript | One UI and command surface; Windows is verified and macOS remains incomplete |
-| Recognition | whisper.cpp | CPU fallback and CUDA on Windows; macOS Metal packaging is not yet wired into the app runtime |
+| Recognition | whisper.cpp | CPU runtime bundled on Windows; CUDA is an optional verified download; macOS Metal packaging is not yet wired into the app runtime |
 | Live commit | Rolling re-transcription + LocalAgreement | Low perceived latency without flickering unstable words |
 | Scribe cleanup | Ollama or OpenAI-compatible localhost server | Model choice stays with the user and speech stays local |
 | Windows hotkeys | `GetAsyncKeyState` polling | No system-wide keyboard hook |
@@ -199,7 +201,7 @@ pnpm build
 The helper scripts clone the upstream project into ignored `third_party/` and
 copy the resulting `whisper-stream` binary into Tauri's sidecar directory.
 
-Windows (packaged CUDA runtime with an in-app CPU fallback):
+Windows (bundled CPU runtime plus a separately packaged optional CUDA runtime):
 
 ```powershell
 ./scripts/build-whisper.ps1
@@ -214,6 +216,9 @@ macOS with Metal:
 Speech models are not bundled with the installer. Download one from **Voice →
 Compare and download models**; Quill stores it in the platform application-data
 `models/` folder and verifies its SHA-256 digest before making it available.
+NVIDIA users can likewise download the optional CUDA runtime from **Voice →
+Compute backend**. Quill verifies the archive before installation, and selecting
+CUDA without the pack keeps transcription available on CPU with a visible status.
 
 ## Native desktop build
 

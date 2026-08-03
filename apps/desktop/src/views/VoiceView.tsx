@@ -18,16 +18,23 @@ import {
   majorLanguages,
 } from "../data/languages";
 import type { AppSettings, ProviderStatus } from "../types";
+import type { CudaRuntimeStatus } from "../types";
 import {
+  cancelCudaRuntimeDownload,
   cancelOllamaPull,
   cancelWhisperDownload,
+  deleteCudaRuntime,
   deleteWhisperModel,
+  downloadCudaRuntime,
   downloadWhisperModel,
+  getCudaRuntimeStatus,
   listAudioInputDevices,
   listInstalledWhisperModels,
   openExternal,
   pullOllamaModel,
 } from "../tauri";
+
+const CUDA_RUNTIME_ID = "cuda-runtime-windows-x64";
 
 interface WhisperModelInfo {
   id: string;
@@ -351,6 +358,7 @@ export function VoiceView({
   const [inputDevices, setInputDevices] = useState<string[]>([]);
   const [installedModels, setInstalledModels] = useState<string[]>([]);
   const [modelsScanned, setModelsScanned] = useState(false);
+  const [cudaRuntime, setCudaRuntime] = useState<CudaRuntimeStatus | null>(null);
   const [downloads, setDownloads] = useState<Record<string, DownloadProgress>>({});
   const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({});
   const [ollamaPulls, setOllamaPulls] = useState<
@@ -365,6 +373,10 @@ export function VoiceView({
       setInstalledModels(models);
       setModelsScanned(true);
     });
+  }, []);
+
+  const refreshCudaRuntime = useCallback(() => {
+    void getCudaRuntimeStatus().then(setCudaRuntime);
   }, []);
 
   const visibleModels = useMemo(
@@ -398,7 +410,8 @@ export function VoiceView({
   useEffect(() => {
     void listAudioInputDevices().then(setInputDevices);
     refreshInstalled();
-  }, [refreshInstalled]);
+    refreshCudaRuntime();
+  }, [refreshCudaRuntime, refreshInstalled]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -427,7 +440,11 @@ export function VoiceView({
             delete next[id];
             return next;
           });
-          refreshInstalled();
+          if (id === CUDA_RUNTIME_ID) {
+            refreshCudaRuntime();
+          } else {
+            refreshInstalled();
+          }
         } else if (error) {
           setDownloadErrors((current) => ({ ...current, [id]: error }));
         }
@@ -437,7 +454,7 @@ export function VoiceView({
       void unlistenProgress.then((dispose) => dispose());
       void unlistenComplete.then((dispose) => dispose());
     };
-  }, [refreshInstalled]);
+  }, [refreshCudaRuntime, refreshInstalled]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -554,6 +571,49 @@ export function VoiceView({
     refreshInstalled();
   }
 
+  async function startCudaDownload() {
+    const id = CUDA_RUNTIME_ID;
+    setDownloadErrors((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setDownloads((current) => ({
+      ...current,
+      [id]: { bytesDownloaded: 0, bytesTotal: cudaRuntime?.downloadBytes ?? 700_000_000 },
+    }));
+    try {
+      await downloadCudaRuntime();
+    } catch (error) {
+      setDownloads((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setDownloadErrors((current) => ({
+        ...current,
+        [id]: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+
+  async function removeCudaRuntime() {
+    try {
+      await deleteCudaRuntime();
+      setDownloadErrors((current) => {
+        const next = { ...current };
+        delete next[CUDA_RUNTIME_ID];
+        return next;
+      });
+      refreshCudaRuntime();
+    } catch (error) {
+      setDownloadErrors((current) => ({
+        ...current,
+        [CUDA_RUNTIME_ID]: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+
   function changeLanguage(language: string) {
     const preferred = preferredModelForLanguage(
       language,
@@ -572,7 +632,16 @@ export function VoiceView({
     setChecking(false);
   }
 
-  const bundledModelId = "base.en";
+  const cudaProgress = downloads[CUDA_RUNTIME_ID];
+  const cudaError = downloadErrors[CUDA_RUNTIME_ID] ?? cudaRuntime?.error;
+  const cudaPercent = cudaProgress
+    ? Math.min(
+        100,
+        Math.round(
+          (cudaProgress.bytesDownloaded / Math.max(cudaProgress.bytesTotal, 1)) * 100,
+        ),
+      )
+    : 0;
 
   return (
     <div className="view-stack">
@@ -705,17 +774,15 @@ export function VoiceView({
                                   <Check size={12} strokeWidth={2.4} />
                                   Installed
                                 </span>
-                                {model.id !== bundledModelId ? (
-                                  <button
-                                    type="button"
-                                    className="icon-only-button"
-                                    onClick={() => removeModel(model.id)}
-                                    aria-label={`Delete ${model.label}`}
-                                    title="Delete model"
-                                  >
-                                    <Trash2 size={12} strokeWidth={1.8} />
-                                  </button>
-                                ) : null}
+                                <button
+                                  type="button"
+                                  className="icon-only-button"
+                                  onClick={() => removeModel(model.id)}
+                                  aria-label={`Delete ${model.label}`}
+                                  title="Delete model"
+                                >
+                                  <Trash2 size={12} strokeWidth={1.8} />
+                                </button>
                               </div>
                             ) : (
                               <button
@@ -748,22 +815,84 @@ export function VoiceView({
             label="Compute backend"
             description={`Which chip runs the model. ${
               backendOptions.find((o) => o.id === settings.backend)?.title
-            } — ${backendOptions.find((o) => o.id === settings.backend)?.requires}.`}
+            } — ${backendOptions.find((o) => o.id === settings.backend)?.requires}.${
+              settings.backend === "cuda" && cudaRuntime?.state !== "installed"
+                ? " Quill will use CPU until the optional CUDA runtime is installed."
+                : ""
+            }`}
           >
-            <select
-              value={settings.backend}
-              onChange={(event) =>
-                update("backend", event.target.value as AppSettings["backend"])
-              }
-            >
-              {backendOptions
-                .filter((option) => option.platforms.includes(platform))
-                .map((option) => (
-                  <option value={option.id} key={option.id}>
-                    {option.title}
-                  </option>
-                ))}
-            </select>
+            <div className="backend-control">
+              <select
+                value={settings.backend}
+                onChange={(event) =>
+                  update("backend", event.target.value as AppSettings["backend"])
+                }
+              >
+                {backendOptions
+                  .filter((option) => option.platforms.includes(platform))
+                  .map((option) => (
+                    <option value={option.id} key={option.id}>
+                      {option.title}
+                    </option>
+                  ))}
+              </select>
+              {platform === "win" ? (
+                <div className="cuda-runtime-control">
+                  <span className="cuda-runtime-control__label">CUDA runtime · ~700 MB</span>
+                  {cudaProgress ? (
+                    <div className="model-guide__progress">
+                      <div className="progress-bar" aria-hidden="true">
+                        <div
+                          className="progress-bar__fill"
+                          style={{ width: `${cudaPercent}%` }}
+                        />
+                      </div>
+                      <div className="model-guide__progress-row">
+                        <span className="progress-bar__label">
+                          {cudaPercent}%
+                          {cudaProgress.bytesTotal > 0
+                            ? ` · ${formatBytes(cudaProgress.bytesDownloaded)} / ${formatBytes(cudaProgress.bytesTotal)}`
+                            : ""}
+                        </span>
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => cancelCudaRuntimeDownload()}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : cudaRuntime?.state === "installed" ? (
+                    <div className="model-guide__installed">
+                      <span className="model-status is-installed">
+                        <Check size={12} strokeWidth={2.4} />
+                        Installed
+                      </span>
+                      <button
+                        type="button"
+                        className="icon-only-button"
+                        onClick={removeCudaRuntime}
+                        aria-label="Remove CUDA runtime"
+                        title="Remove CUDA runtime to reclaim disk space"
+                      >
+                        <Trash2 size={12} strokeWidth={1.8} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="row-download-button"
+                      onClick={startCudaDownload}
+                    >
+                      <Download size={12} strokeWidth={2} />
+                      {cudaRuntime?.state === "invalid" ? "Download again" : "Download (~700 MB)"}
+                    </button>
+                  )}
+                  {cudaError ? <p className="model-guide__error">{cudaError}</p> : null}
+                </div>
+              ) : null}
+            </div>
           </SettingRow>
           <SettingRow
             label="Language"

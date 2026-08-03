@@ -4,6 +4,7 @@ import { defaultSettings } from "./defaults";
 import { capDismissedSuggestions } from "./dictionary";
 import type {
   AppSettings,
+  CudaRuntimeStatus,
   DictionarySuggestion,
   Mode,
   ProviderStatus,
@@ -73,6 +74,33 @@ export async function cancelWhisperDownload(id: string): Promise<void> {
 export async function deleteWhisperModel(id: string): Promise<void> {
   if (!isTauri()) return;
   await invoke("delete_whisper_model", { id });
+}
+
+export async function getCudaRuntimeStatus(): Promise<CudaRuntimeStatus> {
+  if (!isTauri()) {
+    return {
+      state: "missing",
+      expectedRevision: "f049fff95a089aa9969deb009cdd4892b3e74916",
+      downloadBytes: 700_000_000,
+      error: null,
+    };
+  }
+  return invoke<CudaRuntimeStatus>("get_cuda_runtime_status");
+}
+
+export async function downloadCudaRuntime(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("download_cuda_runtime");
+}
+
+export async function cancelCudaRuntimeDownload(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("cancel_cuda_runtime_download");
+}
+
+export async function deleteCudaRuntime(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("delete_cuda_runtime");
 }
 
 export async function pullOllamaModel(name: string): Promise<void> {

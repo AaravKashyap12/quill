@@ -13,7 +13,7 @@ export const defaultSettings: AppSettings = {
   },
   audioInputDevice: null,
   whisperModel: "base.en",
-  backend: "cuda",
+  backend: "auto",
   language: "en",
   defaultRegister: "generic",
   cleanupProvider: "auto",

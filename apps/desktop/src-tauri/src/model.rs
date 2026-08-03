@@ -85,7 +85,7 @@ impl Default for AppSettings {
             },
             audio_input_device: None,
             whisper_model: "base.en".into(),
-            backend: ComputeBackend::Cuda,
+            backend: ComputeBackend::Auto,
             language: "en".into(),
             default_register: Register::Generic,
             cleanup_provider: CleanupProvider::Auto,

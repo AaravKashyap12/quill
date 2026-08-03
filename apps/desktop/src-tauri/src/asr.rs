@@ -1,4 +1,5 @@
 use crate::audio::pcm16_wav;
+use crate::downloads::{self, CudaRuntimeAvailability};
 use crate::metrics;
 use crate::model::{AppSettings, ComputeBackend, DictionaryEntry, DictionaryKind};
 use crate::streaming::TimedWord;
@@ -13,7 +14,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
-const WHISPER_REVISION: &str = "v1.9.1 (f049fff95a089aa9969deb009cdd4892b3e74916)";
 const MAX_DICTIONARY_PROMPT_CHARS: usize = 800;
 
 /// English-only Whisper models cannot decode other
@@ -36,14 +36,43 @@ fn effective_language(model: &str, requested: &str) -> String {
     }
     requested_norm.to_string()
 }
-const CUDA_ARTIFACT_SHA256: &str =
-    "aecdce0e4d4bb758a7c72a31f3f9f19a7b6d861405fd2da743cd86398633c963";
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeBackend {
+    Cpu,
+    Cuda,
+}
 
 pub struct WhisperServer {
     child: Child,
     client: reqwest::Client,
     endpoint: String,
     pub cold_load_ms: u128,
+    pub backend: RuntimeBackend,
+    pub cuda_pack_missing: bool,
+}
+
+impl WhisperServer {
+    pub fn ready_message(&self) -> &'static str {
+        if self.cuda_pack_missing {
+            "Ready on CPU — CUDA runtime not installed"
+        } else {
+            "Ready"
+        }
+    }
+
+    pub fn activity_message(&self) -> &'static str {
+        match self.backend {
+            RuntimeBackend::Cpu => "Transcribing on CPU",
+            RuntimeBackend::Cuda => "Transcribing on CUDA",
+        }
+    }
+
+    pub fn backend_name(&self) -> &'static str {
+        match self.backend {
+            RuntimeBackend::Cpu => "CPU",
+            RuntimeBackend::Cuda => "CUDA",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -197,7 +226,7 @@ impl WhisperServer {
             .context("Tauri did not provide the packaged resource directory")?;
         let runtime = locate_resource(
             &resource_root,
-            Path::new("resources/whisper/windows-x64-cuda"),
+            Path::new("resources/whisper/windows-x64-cpu"),
         )?;
         let model = locate_whisper_model(app, &resource_root, &settings.whisper_model)?;
         let executable = runtime.join("whisper-server.exe");
@@ -207,12 +236,6 @@ impl WhisperServer {
                 executable.display()
             ));
         }
-        if !runtime.join("ggml-cuda.dll").is_file() || !runtime.join("cublas64_11.dll").is_file() {
-            return Err(anyhow!(
-                "packaged CUDA runtime is incomplete: {}",
-                runtime.display()
-            ));
-        }
         if !model.is_file() {
             return Err(anyhow!(
                 "packaged whisper model is missing: {}",
@@ -220,11 +243,31 @@ impl WhisperServer {
             ));
         }
 
+        let wants_cuda = matches!(
+            settings.backend,
+            ComputeBackend::Auto | ComputeBackend::Cuda
+        );
+        let (cuda_runtime, cuda_pack_missing) = if wants_cuda {
+            match downloads::cuda_runtime_availability(app).map_err(anyhow::Error::msg)? {
+                CudaRuntimeAvailability::Missing => (None, true),
+                CudaRuntimeAvailability::Ready(directory) => (Some(directory), false),
+                CudaRuntimeAvailability::Invalid(error) => return Err(anyhow!(error)),
+            }
+        } else {
+            (None, false)
+        };
+        let require_cuda = cuda_runtime.is_some();
+        let active_backend = if require_cuda {
+            RuntimeBackend::Cuda
+        } else {
+            RuntimeBackend::Cpu
+        };
+
         let port = reserve_local_port()?;
         let endpoint = format!("http://127.0.0.1:{port}");
         let mut command = Command::new(&executable);
         command
-            .current_dir(&runtime)
+            .current_dir(cuda_runtime.as_deref().unwrap_or(&runtime))
             .arg("--model")
             .arg(&model)
             .arg("--host")
@@ -243,7 +286,7 @@ impl WhisperServer {
             .stderr(Stdio::piped());
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);
-        if matches!(settings.backend, ComputeBackend::Cpu) {
+        if !require_cuda {
             command.arg("--no-gpu");
         }
 
@@ -270,11 +313,8 @@ impl WhisperServer {
             .connect_timeout(Duration::from_secs(2))
             .timeout(Duration::from_secs(90))
             .build()?;
-        let require_cuda = !matches!(settings.backend, ComputeBackend::Cpu);
         let mut cuda_device_detected = false;
         let mut cuda_backend_active = false;
-        let mut cuda_device_log = String::new();
-        let mut cuda_backend_log = String::new();
         let mut ready = false;
         while started.elapsed() < Duration::from_secs(90) {
             if let Some(status) = child.try_wait()? {
@@ -287,11 +327,9 @@ impl WhisperServer {
             {
                 if line.contains("found 1 CUDA devices") && line.contains("VRAM") {
                     cuda_device_detected = true;
-                    cuda_device_log = line.clone();
                 }
                 if line.contains("using CUDA0 backend") || line.contains("loaded CUDA backend") {
                     cuda_backend_active = true;
-                    cuda_backend_log = line;
                 }
             }
             if client.get(&endpoint).send().await.is_ok() {
@@ -314,53 +352,60 @@ impl WhisperServer {
             ));
         }
 
-        // The first CUDA inference initializes/JITs kernels and is much slower
-        // than subsequent passes on a GTX 1650. Pay that cost during startup so
-        // the first spoken word cannot time out the live session.
-        let warmup = Form::new()
-            .part(
-                "file",
-                Part::bytes(pcm16_wav(&vec![0.0; 4_000]))
-                    .file_name("quill-cuda-warmup.wav")
-                    .mime_str("audio/wav")?,
-            )
-            .text("response_format", "verbose_json")
-            .text("temperature", "0")
-            .text("temperature_inc", "0.2")
-            .text("suppress_nst", "true")
-            .text("no_context", "true")
-            .text("split_on_word", "true")
-            .text("language", "en");
-        client
-            .post(format!("{endpoint}/inference"))
-            .multipart(warmup)
-            .send()
-            .await
-            .context("whisper.cpp CUDA warmup request failed")?
-            .error_for_status()
-            .context("whisper.cpp CUDA warmup returned an error")?;
+        if require_cuda {
+            // The first CUDA inference initializes/JITs kernels and is much slower
+            // than subsequent passes on a GTX 1650. Pay that cost during startup so
+            // the first spoken word cannot time out the live session.
+            let warmup = Form::new()
+                .part(
+                    "file",
+                    Part::bytes(pcm16_wav(&vec![0.0; 4_000]))
+                        .file_name("quill-cuda-warmup.wav")
+                        .mime_str("audio/wav")?,
+                )
+                .text("response_format", "verbose_json")
+                .text("temperature", "0")
+                .text("temperature_inc", "0.2")
+                .text("suppress_nst", "true")
+                .text("no_context", "true")
+                .text("split_on_word", "true")
+                .text("language", "en");
+            client
+                .post(format!("{endpoint}/inference"))
+                .multipart(warmup)
+                .send()
+                .await
+                .context("whisper.cpp CUDA warmup request failed")?
+                .error_for_status()
+                .context("whisper.cpp CUDA warmup returned an error")?;
+        }
 
         let cold_load_ms = started.elapsed().as_millis();
-        let cuda_detail = format!("{cuda_device_log}; {cuda_backend_log}");
-        metrics::record(
-            "whisperCudaVerified",
-            cold_load_ms,
-            None,
-            Some(&cuda_detail),
-        )?;
+        if require_cuda {
+            metrics::record(
+                "whisperCudaVerified",
+                cold_load_ms,
+                None,
+                Some("device detected; CUDA backend active"),
+            )?;
+        }
         tracing::info!(
-            revision = WHISPER_REVISION,
-            artifact_sha256 = CUDA_ARTIFACT_SHA256,
+            version = downloads::WHISPER_VERSION,
+            revision = downloads::WHISPER_REVISION,
             cold_load_ms,
             cuda_device_detected,
             cuda_backend_active,
-            "packaged whisper.cpp server ready"
+            active_backend = ?active_backend,
+            cuda_pack_missing,
+            "whisper.cpp server ready"
         );
         Ok(Self {
             child,
             client,
             endpoint,
             cold_load_ms,
+            backend: active_backend,
+            cuda_pack_missing,
         })
     }
 

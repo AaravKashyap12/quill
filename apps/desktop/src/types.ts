@@ -46,6 +46,13 @@ export interface ProviderStatus {
   models: string[];
 }
 
+export interface CudaRuntimeStatus {
+  state: "missing" | "installed" | "invalid";
+  expectedRevision: string;
+  downloadBytes: number;
+  error: string | null;
+}
+
 export interface RuntimeStatus {
   state: "ready" | "listening" | "processing" | "error";
   mode: Mode | null;

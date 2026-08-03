@@ -2348,6 +2348,54 @@ button:disabled {
   gap: 4px;
 }
 
+.backend-control {
+  display: flex;
+  width: 260px;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.backend-control > select {
+  width: 100%;
+}
+
+.cuda-runtime-control {
+  display: flex;
+  width: 100%;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cuda-runtime-control__label {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.cuda-runtime-control .model-guide__progress {
+  width: 100%;
+}
+
+.cuda-runtime-control .model-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+.cuda-runtime-control .model-status.is-installed {
+  color: var(--success);
+}
+
+.cuda-runtime-control .model-guide__error {
+  max-width: 260px;
+  text-align: right;
+}
+
 .model-guide__progress-row {
   display: flex;
   align-items: center;

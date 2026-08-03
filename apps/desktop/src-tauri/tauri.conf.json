@@ -83,7 +83,7 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "resources/whisper/windows-x64-cuda/*"
+      "resources/whisper/windows-x64-cpu/*"
     ],
     "targets": "all",
     "category": "Productivity",
