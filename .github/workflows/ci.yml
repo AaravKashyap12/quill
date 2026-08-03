@@ -14,8 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -36,6 +34,14 @@ jobs:
         os: [windows-latest, macos-14]
     steps:
       - uses: actions/checkout@v4
+      # Tauri validates exact bundle resource paths during compilation. Tests
+      # never start ASR, so provide an empty runner-only file without weakening
+      # production or release builds.
+      - name: Create CI-only model placeholder
+        shell: bash
+        run: |
+          mkdir -p apps/desktop/src-tauri/resources/models
+          : > apps/desktop/src-tauri/resources/models/ggml-base.en.bin
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

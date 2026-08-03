@@ -79,6 +79,12 @@ Copy-Item -LiteralPath (Join-Path $cublasRoot "lib\cublasLt64_11.dll") -Destinat
 Copy-Item -LiteralPath (Join-Path $cublasRoot "LICENSE") -Destination (Join-Path $runtimeDestination "NVIDIA-CUDA-LICENSE.txt") -Force
 Copy-Item -LiteralPath $model -Destination $modelDestination -Force
 
+$minimumModelSizeBytes = 100MB
+$installedModelSizeBytes = (Get-Item -LiteralPath $modelDestination).Length
+if ($installedModelSizeBytes -lt $minimumModelSizeBytes) {
+  throw "Provisioned model is unexpectedly small ($installedModelSizeBytes bytes); refusing to build a release."
+}
+
 Write-Host "Provisioned pinned whisper.cpp v1.9.1 CUDA runtime and base.en model."
 Write-Host "Runtime: $runtimeDestination"
 Write-Host "Model:   $modelDestination"
