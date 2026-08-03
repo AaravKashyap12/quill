@@ -51,6 +51,14 @@ jobs:
       - name: Rust tests
         working-directory: apps/desktop/src-tauri
         run: cargo test
-      - name: Rust lint
+      - name: Rust lint (Windows)
+        if: runner.os == 'Windows'
         working-directory: apps/desktop/src-tauri
         run: cargo clippy --all-targets -- -D warnings
+      - name: Rust lint (macOS)
+        if: runner.os == 'macOS'
+        working-directory: apps/desktop/src-tauri
+        # The session runtime is intentionally Windows-gated until macOS ASR
+        # packaging exists, so its dependency graph is dead code on this target.
+        # Keep every other macOS warning fatal.
+        run: cargo clippy --all-targets -- -D warnings -A dead-code
