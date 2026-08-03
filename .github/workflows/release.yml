@@ -1,0 +1,54 @@
+name: Native release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, for example v0.1.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: --target x86_64-pc-windows-msvc
+            assetNamePattern: Quill-windows-x64[ext]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - run: pnpm install --frozen-lockfile
+      - name: Build Windows whisper.cpp
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build-whisper.ps1
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ inputs.tag }}
+          releaseName: Quill ${{ inputs.tag }}
+          releaseDraft: true
+          prerelease: false
+          # tauri-action applies this before upload and uses the same name in
+          # latest.json, keeping updater archives and signatures paired.
+          assetNamePattern: ${{ matrix.assetNamePattern }}
+          args: ${{ matrix.args }}

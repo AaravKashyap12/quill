@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-and-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pnpm install --frozen-lockfile
+      - run: python prototypes/test_scribe_buffer.py
+      - run: pnpm typecheck
+      - run: pnpm build
+
+  rust:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Rust format
+        working-directory: apps/desktop/src-tauri
+        run: cargo fmt --check
+      - name: Rust tests
+        working-directory: apps/desktop/src-tauri
+        run: cargo test
+      - name: Rust lint
+        working-directory: apps/desktop/src-tauri
+        run: cargo clippy --all-targets -- -D warnings

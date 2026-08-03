@@ -1,0 +1,124 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Quill",
+  "version": "0.1.0",
+  "identifier": "dev.quill.dictation",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Quill",
+        "width": 1120,
+        "height": 760,
+        "minWidth": 900,
+        "minHeight": 640,
+        "resizable": true,
+        "center": true,
+        "visible": true,
+        "backgroundColor": "#FCFBF8"
+      },
+      {
+        "label": "overlay",
+        "url": "index.html?overlay&mode=dictation",
+        "width": 160,
+        "height": 54,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false,
+        "shadow": false
+      },
+      {
+        "label": "scribe-overlay",
+        "url": "index.html?overlay&mode=scribe",
+        "width": 160,
+        "height": 54,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false,
+        "shadow": false
+      },
+      {
+        "label": "scribe-review",
+        "url": "index.html?review",
+        "title": "Review Scribe draft",
+        "width": 420,
+        "height": 326,
+        "minWidth": 380,
+        "minHeight": 300,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": false,
+        "visible": false,
+        "focus": true,
+        "shadow": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost http://127.0.0.1:*; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "resources": [
+      "resources/whisper/windows-x64-cuda/*",
+      "resources/models/ggml-base.en.bin"
+    ],
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "Local voice dictation with Dictation and Scribe hotkeys.",
+    "longDescription": "Quill types raw live speech with one global hotkey and resolves spoken self-corrections with another. Recognition and cleanup run locally.",
+    "copyright": "Copyright © 2026 Quill contributors",
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    },
+    "macOS": {
+      "dmg": {
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        },
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        }
+      },
+      "minimumSystemVersion": "12.0"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/AaravKashyap12/quill/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+packages:
+  - "apps/desktop"
+
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+
+confirmModulesPurge: false
+allowBuilds:
+  esbuild: set this to true or false
+  sharp: set this to true or false

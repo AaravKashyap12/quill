@@ -1,0 +1,23 @@
+{
+  "name": "quill",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Free, local-first voice dictation with separate Dictation and Scribe hotkeys.",
+  "license": "AGPL-3.0-or-later",
+  "packageManager": "pnpm@10.12.1",
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "scripts": {
+    "dev": "pnpm --filter @quill/desktop dev",
+    "dev:desktop": "pnpm --filter @quill/desktop dev",
+    "build": "pnpm --filter @quill/desktop build",
+    "build:desktop": "pnpm --filter @quill/desktop build",
+    "tauri": "pnpm --filter @quill/desktop tauri",
+    "tauri:build": "pnpm --filter @quill/desktop tauri build",
+    "test": "pnpm test:prototype && pnpm --filter @quill/desktop test",
+    "test:prototype": "node scripts/run-python-tests.mjs",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint"
+  }
+}
