@@ -6,7 +6,6 @@ param(
 $ErrorActionPreference = "Stop"
 $workspace = Resolve-Path (Join-Path $PSScriptRoot "..")
 $runtimeDestination = Join-Path $workspace "apps\desktop\src-tauri\resources\whisper\windows-x64-cuda"
-$modelDestination = Join-Path $workspace "apps\desktop\src-tauri\resources\models\ggml-base.en.bin"
 
 $artifacts = @{
   Whisper = @{
@@ -18,11 +17,6 @@ $artifacts = @{
     Url = "https://developer.download.nvidia.com/compute/cublas/redist/libcublas/windows-x86_64/libcublas-windows-x86_64-11.8.1.74-archive.zip"
     File = "libcublas-windows-x86_64-11.8.1.74-archive.zip"
     Sha256 = "d0a110abef0c2d302d90b141772cb39ef1a94c4d9a7215b0c4b6bd869fdae644"
-  }
-  Model = @{
-    Url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
-    File = "ggml-base.en.bin"
-    Sha256 = "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002"
   }
 }
 
@@ -43,7 +37,6 @@ function Get-VerifiedArtifact {
 
 $whisperArchive = Get-VerifiedArtifact $artifacts.Whisper
 $cublasArchive = Get-VerifiedArtifact $artifacts.Cublas
-$model = Get-VerifiedArtifact $artifacts.Model
 $staging = Join-Path $CacheDirectory ("staging-" + [guid]::NewGuid().ToString("N"))
 $whisperStaging = Join-Path $staging "whisper"
 $cublasStaging = Join-Path $staging "cublas"
@@ -77,14 +70,6 @@ $cublasRoot = Join-Path $cublasStaging "libcublas-windows-x86_64-11.8.1.74-archi
 Copy-Item -LiteralPath (Join-Path $cublasRoot "lib\cublas64_11.dll") -Destination $runtimeDestination -Force
 Copy-Item -LiteralPath (Join-Path $cublasRoot "lib\cublasLt64_11.dll") -Destination $runtimeDestination -Force
 Copy-Item -LiteralPath (Join-Path $cublasRoot "LICENSE") -Destination (Join-Path $runtimeDestination "NVIDIA-CUDA-LICENSE.txt") -Force
-Copy-Item -LiteralPath $model -Destination $modelDestination -Force
 
-$minimumModelSizeBytes = 100MB
-$installedModelSizeBytes = (Get-Item -LiteralPath $modelDestination).Length
-if ($installedModelSizeBytes -lt $minimumModelSizeBytes) {
-  throw "Provisioned model is unexpectedly small ($installedModelSizeBytes bytes); refusing to build a release."
-}
-
-Write-Host "Provisioned pinned whisper.cpp v1.9.1 CUDA runtime and base.en model."
+Write-Host "Provisioned pinned whisper.cpp v1.9.1 CUDA runtime."
 Write-Host "Runtime: $runtimeDestination"
-Write-Host "Model:   $modelDestination"

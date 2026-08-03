@@ -76,8 +76,7 @@
   "bundle": {
     "active": true,
     "resources": [
-      "resources/whisper/windows-x64-cuda/*",
-      "resources/models/ggml-base.en.bin"
+      "resources/whisper/windows-x64-cuda/*"
     ],
     "targets": "all",
     "category": "Productivity",
