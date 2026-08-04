@@ -165,6 +165,7 @@ pub fn cuda_runtime_availability(app: &AppHandle) -> Result<CudaRuntimeAvailabil
     })
 }
 
+#[cfg(windows)]
 pub fn cuda_runtime_generation(app: &AppHandle) -> u64 {
     app.state::<DownloadState>()
         .cuda_generation
@@ -178,7 +179,13 @@ pub fn get_cuda_runtime_status(app: AppHandle) -> Result<CudaRuntimeStatus, Stri
     }
     let (state, error) = match cuda_runtime_availability(&app)? {
         CudaRuntimeAvailability::Missing => ("missing", None),
-        CudaRuntimeAvailability::Ready(_) => ("installed", None),
+        CudaRuntimeAvailability::Ready(directory) => {
+            // Reading the validated directory keeps the status path honest on
+            // every target even though it is intentionally never returned to
+            // the frontend.
+            let _ = directory;
+            ("installed", None)
+        }
         CudaRuntimeAvailability::Invalid(error) => ("invalid", Some(error)),
     };
     Ok(CudaRuntimeStatus {

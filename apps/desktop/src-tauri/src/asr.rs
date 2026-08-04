@@ -548,10 +548,10 @@ impl WhisperServer {
 #[cfg(windows)]
 const WINDOWS_WHISPER_RUNTIME_DIR: &str = "resources/whisper/windows-x64-cpu";
 
-fn locate_whisper_runtime(resource_root: &Path) -> Result<(PathBuf, PathBuf)> {
+fn locate_whisper_runtime(_resource_root: &Path) -> Result<(PathBuf, PathBuf)> {
     #[cfg(windows)]
     {
-        let runtime = locate_resource(resource_root, Path::new(WINDOWS_WHISPER_RUNTIME_DIR))?;
+        let runtime = locate_resource(_resource_root, Path::new(WINDOWS_WHISPER_RUNTIME_DIR))?;
         let executable = runtime.join("whisper-server.exe");
         Ok((runtime, executable))
     }
@@ -579,7 +579,7 @@ fn locate_whisper_runtime(resource_root: &Path) -> Result<(PathBuf, PathBuf)> {
 
     #[cfg(not(any(windows, target_os = "macos")))]
     {
-        let _ = resource_root;
+        let _ = _resource_root;
         Err(anyhow!(
             "Quill speech recognition is not packaged for this operating system"
         ))

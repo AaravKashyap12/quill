@@ -11,6 +11,7 @@ pub enum Register {
     Generic,
 }
 
+#[cfg(any(windows, test))]
 const BROWSERS: &[&str] = &[
     "chrome", "msedge", "firefox", "brave", "arc", "opera", "vivaldi",
 ];
@@ -36,6 +37,7 @@ pub fn resolve(target: &InsertionTarget) -> Register {
     }
 }
 
+#[cfg(any(windows, test))]
 fn classify(title: Option<&str>, process: Option<&str>) -> Register {
     let process = process.map(str::to_lowercase);
     let is_browser = process
@@ -80,6 +82,7 @@ fn classify(title: Option<&str>, process: Option<&str>) -> Register {
     Register::Generic
 }
 
+#[cfg(any(windows, test))]
 fn contains_any(value: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| value.contains(needle))
 }
