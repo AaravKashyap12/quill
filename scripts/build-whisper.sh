@@ -47,7 +47,7 @@ if [[ ! -x "$built_server" ]]; then
   echo "whisper-server was not produced as an executable at $built_server" >&2
   exit 1
 fi
-if ! lipo -verify_arch arm64 x86_64 "$built_server"; then
+if ! lipo "$built_server" -verify_arch arm64 x86_64; then
   echo "whisper-server is not a universal arm64+x86_64 binary: $built_server" >&2
   exit 1
 fi
