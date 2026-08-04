@@ -21,7 +21,9 @@ jobs:
             rustTargets: x86_64-pc-windows-msvc
             assetNamePattern: Quill-windows-x64[ext]
           - os: macos-14
-            args: --target universal-apple-darwin --bundles dmg
+            # The app target is required for Tauri to create the signed
+            # .app.tar.gz updater artifact; dmg remains the tester installer.
+            args: --target universal-apple-darwin --bundles app,dmg
             rustTargets: aarch64-apple-darwin,x86_64-apple-darwin
             assetNamePattern: Quill-macos-universal[ext]
     runs-on: ${{ matrix.os }}
