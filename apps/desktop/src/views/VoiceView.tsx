@@ -264,7 +264,7 @@ const backendOptions: BackendOption[] = [
   {
     id: "metal",
     title: "Metal",
-    requires: "Apple Silicon Mac (M1–M4)",
+    requires: "macOS 12+ with a Metal-capable GPU",
     platforms: ["mac"],
   },
 ];
@@ -376,8 +376,9 @@ export function VoiceView({
   }, []);
 
   const refreshCudaRuntime = useCallback(() => {
+    if (platform !== "win") return;
     void getCudaRuntimeStatus().then(setCudaRuntime);
-  }, []);
+  }, [platform]);
 
   const visibleModels = useMemo(
     () => modelsForLanguage(settings.language),
@@ -657,7 +658,7 @@ export function VoiceView({
         <div className="settings-group">
           <SettingRow
             label="Microphone"
-            description="Default follows Windows. Pick a specific device to pin it."
+            description={`Default follows ${platform === "mac" ? "macOS" : platform === "win" ? "Windows" : "the system"}. Pick a specific device to pin it.`}
           >
             <select
               value={settings.audioInputDevice ?? ""}

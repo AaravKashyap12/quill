@@ -20,7 +20,8 @@ pub fn load() -> AppSettings {
         .unwrap_or_default();
     let dismissed_count = settings.dismissed_suggestions.len();
     settings.cap_dismissed_suggestions();
-    if settings.dismissed_suggestions.len() != dismissed_count {
+    let backend_changed = settings.normalize_backend_for_platform();
+    if settings.dismissed_suggestions.len() != dismissed_count || backend_changed {
         // Best-effort migration: the in-memory value is bounded even if the
         // existing settings file cannot be rewritten.
         let _ = save(&settings);

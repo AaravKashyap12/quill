@@ -111,6 +111,22 @@ impl AppSettings {
             self.dismissed_suggestions.drain(..excess);
         }
     }
+
+    /// Prevent a settings file copied from another operating system from
+    /// selecting a backend that cannot exist on this machine.
+    pub fn normalize_backend_for_platform(&mut self) -> bool {
+        #[cfg(windows)]
+        let unsupported = self.backend == ComputeBackend::Metal;
+        #[cfg(target_os = "macos")]
+        let unsupported = self.backend == ComputeBackend::Cuda;
+        #[cfg(not(any(windows, target_os = "macos")))]
+        let unsupported = matches!(self.backend, ComputeBackend::Cuda | ComputeBackend::Metal);
+
+        if unsupported {
+            self.backend = ComputeBackend::Auto;
+        }
+        unsupported
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

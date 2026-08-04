@@ -173,6 +173,9 @@ pub fn cuda_runtime_generation(app: &AppHandle) -> u64 {
 
 #[tauri::command]
 pub fn get_cuda_runtime_status(app: AppHandle) -> Result<CudaRuntimeStatus, String> {
+    if !cfg!(windows) {
+        return Err("CUDA runtime downloads are only available on Windows. macOS uses Metal without a separate download.".to_owned());
+    }
     let (state, error) = match cuda_runtime_availability(&app)? {
         CudaRuntimeAvailability::Missing => ("missing", None),
         CudaRuntimeAvailability::Ready(_) => ("installed", None),
@@ -593,6 +596,9 @@ pub async fn download_cuda_runtime(
     app: AppHandle,
     state: State<'_, DownloadState>,
 ) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Err("CUDA runtime downloads are only available on Windows. macOS uses Metal without a separate download.".to_owned());
+    }
     begin_download(&state, CUDA_RUNTIME_ID)?;
     let cancelled = Arc::clone(&state.cancelled);
     let outcome = perform_cuda_download(&app, &cancelled).await;
@@ -606,6 +612,9 @@ pub async fn download_cuda_runtime(
 
 #[tauri::command]
 pub fn cancel_cuda_runtime_download(state: State<'_, DownloadState>) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Err("CUDA runtime downloads are only available on Windows".to_owned());
+    }
     state
         .cancelled
         .write()
@@ -616,6 +625,9 @@ pub fn cancel_cuda_runtime_download(state: State<'_, DownloadState>) -> Result<(
 
 #[tauri::command]
 pub fn delete_cuda_runtime(app: AppHandle, state: State<'_, DownloadState>) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Err("CUDA runtime downloads are only available on Windows".to_owned());
+    }
     let directory = cuda_runtime_dir(&app)?;
     if directory.exists() {
         std::fs::remove_dir_all(&directory).map_err(|_| {

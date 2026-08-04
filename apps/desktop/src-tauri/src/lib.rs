@@ -95,6 +95,7 @@ fn save_settings(
     mut settings: AppSettings,
 ) -> Result<(), String> {
     settings.cap_dismissed_suggestions();
+    settings.normalize_backend_for_platform();
     // Capture whether cleanup-affecting or autostart fields changed, so we can
     // rewarm the LLM / update the OS autostart entry only when needed.
     let (should_rewarm, autostart_changed) = state
@@ -395,7 +396,7 @@ pub fn run() {
     };
 
     let shared_settings = Arc::new(RwLock::new(settings::load()));
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     let session_settings = Arc::clone(&shared_settings);
     let warmup_settings = Arc::clone(&shared_settings);
     let hotkey_capture = Arc::new(AtomicBool::new(false));
@@ -445,13 +446,20 @@ pub fn run() {
                 }
             }
 
-            #[cfg(windows)]
+            #[cfg(target_os = "macos")]
+            {
+                // Ask once at startup so a tester sees the system permission
+                // prompt before a dictation can silently fail to paste.
+                let _ = injection::request_accessibility_permission();
+            }
+
+            #[cfg(any(windows, target_os = "macos"))]
             session::spawn(
                 app.handle().clone(),
                 Arc::clone(&session_settings),
                 Arc::clone(&session_hotkey_capture),
             );
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_os = "macos")))]
             let _ = &session_hotkey_capture;
 
             // Reconcile OS autostart with the persisted setting on every

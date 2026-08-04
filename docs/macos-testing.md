@@ -1,10 +1,9 @@
 # Quill on macOS — tester brief
 
-Quill has never been run on a Mac. Its hotkey and text-insertion hooks are in
-source, but speech recognition still starts the Windows CUDA server and the
-macOS release job does not yet provision the resource layout expected by the
-app. There is no testable end-to-end macOS build yet. Keep this brief for the
-first build after that packaging work is completed.
+This is Quill's first end-to-end macOS build. It compiles a universal Intel +
+Apple Silicon whisper.cpp sidecar with Metal support, but it has not been run
+on physical Mac hardware yet. Treat every result—especially a clear failure
+message—as useful test data.
 
 **Everything is local.** Quill has no accounts, no telemetry, and no servers.
 Audio and transcripts stay on your machine.
@@ -32,6 +31,11 @@ Audio and transcripts stay on your machine.
    If you reinstall a new build, **remove Quill from Accessibility and add it
    back**. macOS keys the permission to the app's identity and unsigned rebuilds
    change it. Stale permission looks exactly like a broken app.
+
+   If you deny Microphone, Quill should explicitly direct you back to **Privacy
+   & Security → Microphone**. If Accessibility is absent, it must refuse to
+   paste and name **Privacy & Security → Accessibility** instead of silently
+   typing into the wrong app.
 
 ## 2. Set up
 
@@ -93,9 +97,14 @@ For each problem:
 - Which app you were typing into
 - macOS version and Mac model (Apple Silicon or Intel)
 
-Logs are at `~/Library/Application Support/com.quill.app/` — attach the log
-file. **It contains no transcript text by design**, so it's safe to share. If
-you find any spoken words in it, that is itself a bug worth reporting.
+Logs are under `~/Library/Application Support/quill/logs/` — attach
+the newest `quill*.log` file. **It contains no transcript text by design**, so
+it's safe to share. If you find any spoken words in it, that is itself a bug
+worth reporting.
+
+Please copy any visible error exactly. The useful macOS-specific failures name
+the missing sidecar path, microphone settings route, Accessibility settings
+route, target-app activation failure, or Metal verification failure.
 
 Crashes, hangs, and "nothing happens at all" are the most useful reports. Don't
 polish them — a one-line "hotkey does nothing in Safari" is genuinely helpful.

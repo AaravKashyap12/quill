@@ -1,6 +1,6 @@
 [package]
 name = "quill"
-version = "0.1.0"
+version = "0.2.0"
 description = "Free, local-first voice dictation with two global hotkeys"
 authors = ["Quill contributors"]
 license = "AGPL-3.0-or-later"
@@ -53,3 +53,5 @@ windows-sys = { version = "0.59", features = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSRunningApplication", "NSWorkspace"] }

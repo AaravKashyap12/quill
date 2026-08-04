@@ -14,6 +14,8 @@ mod windows;
 pub struct InsertionTarget {
     #[cfg(windows)]
     inner: windows::InsertionTarget,
+    #[cfg(target_os = "macos")]
+    inner: macos::InsertionTarget,
 }
 
 impl InsertionTarget {
@@ -52,8 +54,19 @@ pub fn capture_target() -> Result<InsertionTarget> {
 
     #[cfg(not(windows))]
     {
+        #[cfg(target_os = "macos")]
+        return Ok(InsertionTarget {
+            inner: macos::capture_target()?,
+        });
+
+        #[cfg(not(target_os = "macos"))]
         Ok(InsertionTarget {})
     }
+}
+
+#[cfg(target_os = "macos")]
+pub fn request_accessibility_permission() -> bool {
+    macos::request_accessibility_permission()
 }
 
 /// Whether the captured top-level window is the foreground application.
@@ -67,8 +80,14 @@ pub fn target_is_foreground(target: &InsertionTarget) -> bool {
 
     #[cfg(not(windows))]
     {
-        let _ = target;
-        true
+        #[cfg(target_os = "macos")]
+        return macos::target_is_foreground(&target.inner);
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = target;
+            true
+        }
     }
 }
 
@@ -83,8 +102,14 @@ pub fn target_is_available(target: &InsertionTarget) -> bool {
 
     #[cfg(not(windows))]
     {
-        let _ = target;
-        true
+        #[cfg(target_os = "macos")]
+        return macos::target_is_available(&target.inner);
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = target;
+            true
+        }
     }
 }
 
@@ -106,7 +131,19 @@ pub fn inject_text_to_target(
         windows::inject_text_to_target(&target.inner, text, use_clipboard)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        if !macos::target_is_available(&target.inner) {
+            return Ok(TargetInjection::Unavailable);
+        }
+        if !macos::target_is_foreground(&target.inner) {
+            return Ok(TargetInjection::Queued);
+        }
+        inject_text(text, use_clipboard)?;
+        Ok(TargetInjection::Inserted)
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = target;
         inject_text(text, use_clipboard)?;
@@ -131,7 +168,13 @@ pub fn inject_review_text(
         windows::inject_review_text(&target.inner, text, use_clipboard)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::activate_target(&target.inner)?;
+        inject_text_to_target(target, text, use_clipboard)
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         inject_text_to_target(target, text, use_clipboard)
     }

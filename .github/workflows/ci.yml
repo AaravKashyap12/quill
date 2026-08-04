@@ -37,6 +37,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Build pinned macOS whisper.cpp sidecar
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash ./scripts/build-whisper.sh metal
       - name: Rust format
         working-directory: apps/desktop/src-tauri
         run: cargo fmt --check
@@ -50,7 +54,4 @@ jobs:
       - name: Rust lint (macOS)
         if: runner.os == 'macOS'
         working-directory: apps/desktop/src-tauri
-        # The session runtime is intentionally Windows-gated until macOS ASR
-        # packaging exists, so its dependency graph is dead code on this target.
-        # Keep every other macOS warning fatal.
-        run: cargo clippy --all-targets -- -D warnings -A dead-code
+        run: cargo clippy --all-targets -- -D warnings

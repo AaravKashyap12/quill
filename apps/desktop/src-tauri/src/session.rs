@@ -2,13 +2,14 @@ use crate::asr::{AsrPass, WhisperServer};
 use crate::audio::{AudioCapture, AudioSnapshot};
 use crate::cleanup;
 use crate::dictionary;
+#[cfg(windows)]
 use crate::downloads;
 use crate::hotkeys;
 use crate::injection;
 use crate::metrics;
-use crate::model::{
-    AppSettings, ComputeBackend, HotkeyBehavior, HotkeyConfig, InjectionMode, Mode,
-};
+#[cfg(windows)]
+use crate::model::ComputeBackend;
+use crate::model::{AppSettings, HotkeyBehavior, HotkeyConfig, InjectionMode, Mode};
 use crate::recovery;
 use crate::register::Register;
 use crate::streaming::{LocalAgreement, TimedWord};
@@ -29,7 +30,7 @@ const AUDIO_CHECKPOINT_INTERVAL_MS: u64 = 15_000;
 
 pub fn spawn(app: AppHandle, settings: Arc<RwLock<AppSettings>>, hotkey_capture: Arc<AtomicBool>) {
     std::thread::Builder::new()
-        .name("quill-windows-session".into())
+        .name("quill-session".into())
         .spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -39,7 +40,7 @@ pub fn spawn(app: AppHandle, settings: Arc<RwLock<AppSettings>>, hotkey_capture:
                     &app,
                     "error",
                     None,
-                    "Failed to create the Windows session runtime",
+                    "Failed to create Quill's speech session runtime",
                     None,
                 );
                 return;
@@ -50,7 +51,7 @@ pub fn spawn(app: AppHandle, settings: Arc<RwLock<AppSettings>>, hotkey_capture:
                     Arc::clone(&settings),
                     Arc::clone(&hotkey_capture),
                 )) {
-                    tracing::error!(%error, "Windows core loop failed; restarting");
+                    tracing::error!(%error, "speech session loop failed; restarting");
                     hide_overlay(&app);
                     emit_status(
                         &app,
@@ -63,7 +64,7 @@ pub fn spawn(app: AppHandle, settings: Arc<RwLock<AppSettings>>, hotkey_capture:
                 }
             }
         })
-        .expect("failed to start Windows session thread");
+        .expect("failed to start Quill session thread");
 }
 
 async fn run(
@@ -85,6 +86,7 @@ async fn run(
     // server when the user changes model or compute backend.
     let mut loaded_model = startup_settings.whisper_model.clone();
     let mut loaded_backend = startup_settings.backend;
+    #[cfg(windows)]
     let mut loaded_cuda_generation = downloads::cuda_runtime_generation(&app);
     emit_status(&app, "ready", None, server.ready_message(), None);
     // Clear any low-bit key history left from before this process/server
@@ -109,11 +111,15 @@ async fn run(
         // NOT require a restart. Failure to load the new engine bubbles up
         // to the outer supervisor loop, which will retry with the old
         // settings once they're re-persisted.
+        #[cfg(windows)]
         let cuda_generation = downloads::cuda_runtime_generation(&app);
+        #[cfg(windows)]
         let cuda_pack_changed = matches!(
             settings.backend,
             ComputeBackend::Auto | ComputeBackend::Cuda
         ) && cuda_generation != loaded_cuda_generation;
+        #[cfg(not(windows))]
+        let cuda_pack_changed = false;
         if active.is_none()
             && (settings.whisper_model != loaded_model
                 || settings.backend != loaded_backend
@@ -130,7 +136,10 @@ async fn run(
             server = WhisperServer::start(&app, &settings).await?;
             loaded_model = settings.whisper_model.clone();
             loaded_backend = settings.backend;
-            loaded_cuda_generation = cuda_generation;
+            #[cfg(windows)]
+            {
+                loaded_cuda_generation = cuda_generation;
+            }
             emit_status(&app, "ready", None, server.ready_message(), None);
         }
 

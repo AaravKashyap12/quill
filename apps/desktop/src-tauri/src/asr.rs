@@ -1,5 +1,7 @@
 use crate::audio::pcm16_wav;
-use crate::downloads::{self, CudaRuntimeAvailability};
+use crate::downloads;
+#[cfg(windows)]
+use crate::downloads::CudaRuntimeAvailability;
 use crate::metrics;
 use crate::model::{AppSettings, ComputeBackend, DictionaryEntry, DictionaryKind};
 use crate::streaming::TimedWord;
@@ -40,6 +42,7 @@ fn effective_language(model: &str, requested: &str) -> String {
 pub enum RuntimeBackend {
     Cpu,
     Cuda,
+    Metal,
 }
 
 pub struct WhisperServer {
@@ -56,7 +59,11 @@ impl WhisperServer {
         if self.cuda_pack_missing {
             "Ready on CPU — CUDA runtime not installed"
         } else {
-            "Ready"
+            match self.backend {
+                RuntimeBackend::Cpu => "Ready on CPU",
+                RuntimeBackend::Cuda => "Ready on CUDA",
+                RuntimeBackend::Metal => "Ready on Metal",
+            }
         }
     }
 
@@ -64,6 +71,7 @@ impl WhisperServer {
         match self.backend {
             RuntimeBackend::Cpu => "Transcribing on CPU",
             RuntimeBackend::Cuda => "Transcribing on CUDA",
+            RuntimeBackend::Metal => "Transcribing on Metal",
         }
     }
 
@@ -71,6 +79,7 @@ impl WhisperServer {
         match self.backend {
             RuntimeBackend::Cpu => "CPU",
             RuntimeBackend::Cuda => "CUDA",
+            RuntimeBackend::Metal => "Metal",
         }
     }
 }
@@ -224,15 +233,11 @@ impl WhisperServer {
             .path()
             .resource_dir()
             .context("Tauri did not provide the packaged resource directory")?;
-        let runtime = locate_resource(
-            &resource_root,
-            Path::new("resources/whisper/windows-x64-cpu"),
-        )?;
+        let (runtime, executable) = locate_whisper_runtime(&resource_root)?;
         let model = locate_whisper_model(app, &resource_root, &settings.whisper_model)?;
-        let executable = runtime.join("whisper-server.exe");
         if !executable.is_file() {
             return Err(anyhow!(
-                "packaged whisper.cpp server is missing: {}",
+                "Could not find the packaged whisper.cpp server at {}. Reinstall Quill from a complete release build.",
                 executable.display()
             ));
         }
@@ -243,10 +248,12 @@ impl WhisperServer {
             ));
         }
 
+        #[cfg(windows)]
         let wants_cuda = matches!(
             settings.backend,
             ComputeBackend::Auto | ComputeBackend::Cuda
         );
+        #[cfg(windows)]
         let (cuda_runtime, cuda_pack_missing) = if wants_cuda {
             match downloads::cuda_runtime_availability(app).map_err(anyhow::Error::msg)? {
                 CudaRuntimeAvailability::Missing => (None, true),
@@ -256,18 +263,38 @@ impl WhisperServer {
         } else {
             (None, false)
         };
+        #[cfg(windows)]
         let require_cuda = cuda_runtime.is_some();
+        #[cfg(windows)]
         let active_backend = if require_cuda {
             RuntimeBackend::Cuda
         } else {
             RuntimeBackend::Cpu
         };
 
+        #[cfg(target_os = "macos")]
+        let (active_backend, cuda_pack_missing) = match settings.backend {
+            ComputeBackend::Cpu => (RuntimeBackend::Cpu, false),
+            ComputeBackend::Auto | ComputeBackend::Metal => (RuntimeBackend::Metal, false),
+            ComputeBackend::Cuda => {
+                return Err(anyhow!(
+                    "CUDA is only available on Windows. Open Voice settings and choose Metal, CPU, or Auto."
+                ));
+            }
+        };
+
+        #[cfg(not(any(windows, target_os = "macos")))]
+        let (active_backend, cuda_pack_missing) = (RuntimeBackend::Cpu, false);
+
         let port = reserve_local_port()?;
         let endpoint = format!("http://127.0.0.1:{port}");
         let mut command = Command::new(&executable);
+        #[cfg(windows)]
+        let working_directory = cuda_runtime.as_deref().unwrap_or(&runtime);
+        #[cfg(not(windows))]
+        let working_directory = runtime.as_path();
         command
-            .current_dir(cuda_runtime.as_deref().unwrap_or(&runtime))
+            .current_dir(working_directory)
             .arg("--model")
             .arg(&model)
             .arg("--host")
@@ -286,7 +313,7 @@ impl WhisperServer {
             .stderr(Stdio::piped());
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);
-        if !require_cuda {
+        if active_backend == RuntimeBackend::Cpu {
             command.arg("--no-gpu");
         }
 
@@ -315,6 +342,7 @@ impl WhisperServer {
             .build()?;
         let mut cuda_device_detected = false;
         let mut cuda_backend_active = false;
+        let mut metal_backend_active = false;
         let mut ready = false;
         while started.elapsed() < Duration::from_secs(90) {
             if let Some(status) = child.try_wait()? {
@@ -331,10 +359,18 @@ impl WhisperServer {
                 if line.contains("using CUDA0 backend") || line.contains("loaded CUDA backend") {
                     cuda_backend_active = true;
                 }
+                if line.contains("ggml_metal_init: picking default device") {
+                    metal_backend_active = true;
+                }
             }
             if client.get(&endpoint).send().await.is_ok() {
                 ready = true;
-                if !require_cuda || (cuda_device_detected && cuda_backend_active) {
+                let backend_verified = match active_backend {
+                    RuntimeBackend::Cpu => true,
+                    RuntimeBackend::Cuda => cuda_device_detected && cuda_backend_active,
+                    RuntimeBackend::Metal => metal_backend_active,
+                };
+                if backend_verified {
                     break;
                 }
             }
@@ -345,14 +381,21 @@ impl WhisperServer {
                 "whisper.cpp did not become ready within 90 seconds"
             ));
         }
-        if require_cuda && !(cuda_device_detected && cuda_backend_active) {
+        if active_backend == RuntimeBackend::Cuda && !(cuda_device_detected && cuda_backend_active)
+        {
             let _ = child.start_kill();
             return Err(anyhow!(
                 "CUDA verification failed: whisper.cpp did not report a detected GPU and active CUDA0 backend"
             ));
         }
+        if active_backend == RuntimeBackend::Metal && !metal_backend_active {
+            let _ = child.start_kill();
+            return Err(anyhow!(
+                "Metal verification failed: whisper.cpp became ready but did not report an active Metal device. Try CPU in Voice settings and send the Quill log with your macOS and Mac model details."
+            ));
+        }
 
-        if require_cuda {
+        if active_backend == RuntimeBackend::Cuda {
             // The first CUDA inference initializes/JITs kernels and is much slower
             // than subsequent passes on a GTX 1650. Pay that cost during startup so
             // the first spoken word cannot time out the live session.
@@ -381,7 +424,7 @@ impl WhisperServer {
         }
 
         let cold_load_ms = started.elapsed().as_millis();
-        if require_cuda {
+        if active_backend == RuntimeBackend::Cuda {
             metrics::record(
                 "whisperCudaVerified",
                 cold_load_ms,
@@ -395,6 +438,7 @@ impl WhisperServer {
             cold_load_ms,
             cuda_device_detected,
             cuda_backend_active,
+            metal_backend_active,
             active_backend = ?active_backend,
             cuda_pack_missing,
             "whisper.cpp server ready"
@@ -501,6 +545,47 @@ impl WhisperServer {
     }
 }
 
+#[cfg(windows)]
+const WINDOWS_WHISPER_RUNTIME_DIR: &str = "resources/whisper/windows-x64-cpu";
+
+fn locate_whisper_runtime(resource_root: &Path) -> Result<(PathBuf, PathBuf)> {
+    #[cfg(windows)]
+    {
+        let runtime = locate_resource(resource_root, Path::new(WINDOWS_WHISPER_RUNTIME_DIR))?;
+        let executable = runtime.join("whisper-server.exe");
+        Ok((runtime, executable))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Tauri's externalBin sidecar mechanism places the executable next to
+        // Quill in Contents/MacOS and preserves its executable permission bit.
+        // Do not resolve it through bundle.resources (Contents/Resources),
+        // which is intended for data files rather than executable sidecars.
+        let quill_executable = std::env::current_exe()
+            .context("macOS did not provide the path to the running Quill executable")?;
+        let runtime = quill_executable
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Could not resolve the macOS sidecar directory from {}",
+                    quill_executable.display()
+                )
+            })?;
+        let executable = runtime.join("whisper-server");
+        Ok((runtime, executable))
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = resource_root;
+        Err(anyhow!(
+            "Quill speech recognition is not packaged for this operating system"
+        ))
+    }
+}
+
 fn merge_word_pieces(pieces: Vec<WhisperWord>) -> Vec<TimedWord> {
     let mut words = Vec::<TimedWord>::new();
     for piece in pieces {
@@ -568,6 +653,7 @@ fn locate_whisper_model(app: &AppHandle, resource_root: &Path, model_id: &str) -
     ))
 }
 
+#[cfg(windows)]
 fn locate_resource(resource_root: &Path, relative: &Path) -> Result<PathBuf> {
     let direct = resource_root.join(relative);
     if direct.exists() {

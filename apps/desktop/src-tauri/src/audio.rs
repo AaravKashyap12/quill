@@ -6,6 +6,13 @@ use std::sync::{Arc, Mutex};
 pub const WHISPER_SAMPLE_RATE: u32 = 16_000;
 pub const VISUALIZER_BARS: usize = 12;
 
+#[cfg(target_os = "macos")]
+const MICROPHONE_HELP: &str =
+    "Open System Settings → Privacy & Security → Microphone, enable Quill, then try again.";
+#[cfg(not(target_os = "macos"))]
+const MICROPHONE_HELP: &str =
+    "Check that a microphone is connected and allowed for Quill, then try again.";
+
 pub struct AudioSnapshot {
     pub samples: Vec<f32>,
     pub duration_ms: u64,
@@ -24,7 +31,7 @@ pub fn input_devices() -> Result<Vec<String>> {
     let host = cpal::default_host();
     let mut devices = host
         .input_devices()
-        .context("Windows did not expose any audio input devices")?
+        .with_context(|| format!("Could not enumerate audio input devices. {MICROPHONE_HELP}"))?
         .filter_map(|device| device.name().ok())
         .collect::<Vec<_>>();
     devices.sort();
@@ -37,19 +44,21 @@ impl AudioCapture {
         let host = cpal::default_host();
         let device = if let Some(selected) = selected_device {
             host.input_devices()
-                .context("failed to enumerate Windows audio input devices")?
+                .with_context(|| {
+                    format!("Could not enumerate audio input devices. {MICROPHONE_HELP}")
+                })?
                 .find(|device| device.name().is_ok_and(|name| name == selected))
                 .ok_or_else(|| anyhow!("configured microphone is unavailable: {selected}"))?
         } else {
             host.default_input_device()
-                .context("Windows has no default microphone")?
+                .with_context(|| format!("No default microphone is available. {MICROPHONE_HELP}"))?
         };
         let device_name = device
             .name()
             .unwrap_or_else(|_| "Unknown microphone".into());
-        let supported = device
-            .default_input_config()
-            .with_context(|| format!("failed to read the format for microphone: {device_name}"))?;
+        let supported = device.default_input_config().with_context(|| {
+            format!("Could not read the format for microphone '{device_name}'. {MICROPHONE_HELP}")
+        })?;
         let source_sample_rate = supported.sample_rate().0;
         let config: StreamConfig = supported.clone().into();
         let channels = config.channels as usize;
@@ -69,48 +78,60 @@ impl AudioCapture {
             SampleFormat::F32 => {
                 let sink = Arc::clone(&samples);
                 let meter = Arc::clone(&visual_levels);
-                device.build_input_stream(
-                    &config,
-                    move |data: &[f32], _| {
-                        append_mono(&sink, &meter, data, channels, |value| value)
-                    },
-                    on_error,
-                    None,
-                )?
+                device
+                    .build_input_stream(
+                        &config,
+                        move |data: &[f32], _| {
+                            append_mono(&sink, &meter, data, channels, |value| value)
+                        },
+                        on_error,
+                        None,
+                    )
+                    .with_context(|| {
+                        format!("Could not open microphone '{device_name}'. {MICROPHONE_HELP}")
+                    })?
             }
             SampleFormat::I16 => {
                 let sink = Arc::clone(&samples);
                 let meter = Arc::clone(&visual_levels);
-                device.build_input_stream(
-                    &config,
-                    move |data: &[i16], _| {
-                        append_mono(&sink, &meter, data, channels, |value| {
-                            value as f32 / 32_768.0
-                        })
-                    },
-                    on_error,
-                    None,
-                )?
+                device
+                    .build_input_stream(
+                        &config,
+                        move |data: &[i16], _| {
+                            append_mono(&sink, &meter, data, channels, |value| {
+                                value as f32 / 32_768.0
+                            })
+                        },
+                        on_error,
+                        None,
+                    )
+                    .with_context(|| {
+                        format!("Could not open microphone '{device_name}'. {MICROPHONE_HELP}")
+                    })?
             }
             SampleFormat::U16 => {
                 let sink = Arc::clone(&samples);
                 let meter = Arc::clone(&visual_levels);
-                device.build_input_stream(
-                    &config,
-                    move |data: &[u16], _| {
-                        append_mono(&sink, &meter, data, channels, |value| {
-                            (value as f32 - 32_768.0) / 32_768.0
-                        })
-                    },
-                    on_error,
-                    None,
-                )?
+                device
+                    .build_input_stream(
+                        &config,
+                        move |data: &[u16], _| {
+                            append_mono(&sink, &meter, data, channels, |value| {
+                                (value as f32 - 32_768.0) / 32_768.0
+                            })
+                        },
+                        on_error,
+                        None,
+                    )
+                    .with_context(|| {
+                        format!("Could not open microphone '{device_name}'. {MICROPHONE_HELP}")
+                    })?
             }
             format => return Err(anyhow!("unsupported microphone sample format: {format:?}")),
         };
-        stream
-            .play()
-            .with_context(|| format!("failed to start microphone: {device_name}"))?;
+        stream.play().with_context(|| {
+            format!("Could not start microphone '{device_name}'. {MICROPHONE_HELP}")
+        })?;
 
         tracing::info!(
             device = %device_name,
@@ -132,7 +153,9 @@ impl AudioCapture {
 
     pub fn snapshot(&self) -> Result<AudioSnapshot> {
         if let Some(message) = self.error.lock().ok().and_then(|error| error.clone()) {
-            return Err(anyhow!("microphone stream failed: {message}"));
+            return Err(anyhow!(
+                "Microphone stream failed: {message}. {MICROPHONE_HELP}"
+            ));
         }
         let source = self
             .samples

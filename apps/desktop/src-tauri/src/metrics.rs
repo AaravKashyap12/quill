@@ -80,7 +80,7 @@ fn append(event: &impl Serialize) -> Result<()> {
 
 pub fn metrics_path() -> Result<PathBuf> {
     Ok(dirs::data_local_dir()
-        .context("Windows did not provide a local application-data directory")?
+        .context("the operating system did not provide a local application-data directory")?
         .join("quill")
         .join("logs")
         .join("metrics.ndjson"))
