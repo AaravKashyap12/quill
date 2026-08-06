@@ -2,6 +2,7 @@ import { Mic, PenLine, Play } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AppSettings, HotkeyConfig, Mode } from "../types";
 import { formatHotkey } from "../defaults";
+import { isMac } from "../platform";
 import { setHotkeyCapture } from "../tauri";
 
 interface ModeShortcutProps {
@@ -11,11 +12,8 @@ interface ModeShortcutProps {
   onPreview: (active: boolean) => void;
 }
 
-/** Windows hotkeys/windows.rs virtual_key() only understands `Space` or a
- *  single ASCII character, and the polling code has no Meta (Win) modifier
- *  at all. Rejecting anything else here means the UI never captures a
- *  chord the backend would silently drop. Returning a string surfaces the
- *  reason so the recorder can flash a message. */
+/** Keep the recorder inside the key vocabulary understood by the native
+ * pollers. Command is valid on macOS but remains rejected as the Windows key. */
 type HotkeyResult = { ok: true; hotkey: HotkeyConfig } | { ok: false; reason: string };
 
 function hotkeyFromEvent(
@@ -25,7 +23,8 @@ function hotkeyFromEvent(
   // Modifier-only presses aren't a full chord yet — wait for the trigger key.
   if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return null;
 
-  if (event.metaKey) {
+  const mac = isMac();
+  if (event.metaKey && !mac) {
     return {
       ok: false,
       reason: "Windows key isn't supported yet — try Ctrl, Shift, or Alt.",
@@ -33,6 +32,7 @@ function hotkeyFromEvent(
   }
 
   const modifiers = [
+    event.metaKey && mac ? "Meta" : "",
     event.ctrlKey ? "Ctrl" : "",
     event.shiftKey ? "Shift" : "",
     event.altKey ? "Alt" : "",
@@ -53,7 +53,9 @@ function hotkeyFromEvent(
   if (modifiers.length === 0 && key !== "Space") {
     return {
       ok: false,
-      reason: "Add at least one modifier (Ctrl, Shift, or Alt).",
+      reason: mac
+        ? "Add at least one modifier (Command, Control, Shift, or Option)."
+        : "Add at least one modifier (Ctrl, Shift, or Alt).",
     };
   }
 

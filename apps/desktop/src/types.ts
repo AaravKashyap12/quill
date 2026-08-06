@@ -37,6 +37,8 @@ export interface AppSettings {
   injectionMode: "clipboard" | "keystrokes";
   dictionary: DictionaryEntry[];
   dismissedSuggestions: DictionarySuggestion[];
+  speechModelSetupAttempted: boolean;
+  scribeSetupDismissed: boolean;
 }
 
 export interface ProviderStatus {

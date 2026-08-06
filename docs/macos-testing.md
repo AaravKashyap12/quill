@@ -39,8 +39,9 @@ Audio and transcripts stay on your machine.
 
 ## 2. Set up
 
-1. Open Quill → **Voice** → download a speech model. Start with `small.en`
-   (466 MB).
+1. Keep Quill open while the first-run setup downloads `medium.en` (about
+   1.5 GB). Confirm progress appears in both the setup sheet and the sidebar,
+   then disappears when the model is ready.
 2. Optional, for the Scribe feature: install [Ollama](https://ollama.com/) and
    run `ollama pull qwen2.5:7b`. Skip this if you only want to test Dictation.
 

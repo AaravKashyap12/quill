@@ -2,6 +2,7 @@ import { ShieldCheck } from "lucide-react";
 import { ModeShortcut } from "../components/ModeShortcut";
 import { SettingRow } from "../components/SettingRow";
 import { Switch } from "../components/Switch";
+import { detectPlatform } from "../platform";
 import type { AppSettings, HotkeyConfig, Mode } from "../types";
 
 interface GeneralViewProps {
@@ -12,6 +13,7 @@ interface GeneralViewProps {
 }
 
 export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralViewProps) {
+  const pasteShortcut = detectPlatform() === "mac" ? "Command+V" : "Ctrl+V";
   return (
     <div className="view-stack">
       <header className="view-heading">
@@ -126,7 +128,7 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
             label="Text insertion"
             description={
               settings.injectionMode === "clipboard"
-                ? "Quill briefly copies the text and pastes it with Ctrl+V. Fastest and most reliable — recommended for long passages."
+                ? `Quill briefly copies the text and pastes it with ${pasteShortcut}. Fastest and most reliable — recommended for long passages.`
                 : "Quill types each character directly, one keystroke at a time. Works in editors that block paste (some terminals, sandboxed apps) but is slower."
             }
           >

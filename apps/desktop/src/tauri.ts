@@ -39,6 +39,7 @@ export async function persistSettings(settings: AppSettings): Promise<void> {
 
 export async function detectProviders(): Promise<ProviderStatus[]> {
   if (!isTauri()) {
+    if (new URLSearchParams(window.location.search).has("firstRun")) return [];
     return [
       {
         kind: "ollama",
@@ -57,7 +58,11 @@ export async function listAudioInputDevices(): Promise<string[]> {
 }
 
 export async function listInstalledWhisperModels(): Promise<string[]> {
-  if (!isTauri()) return ["base.en"];
+  if (!isTauri()) {
+    return new URLSearchParams(window.location.search).has("firstRun")
+      ? []
+      : ["base.en"];
+  }
   return invoke<string[]>("list_installed_whisper_models");
 }
 

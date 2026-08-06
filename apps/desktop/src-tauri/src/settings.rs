@@ -21,7 +21,9 @@ pub fn load() -> AppSettings {
     let dismissed_count = settings.dismissed_suggestions.len();
     settings.cap_dismissed_suggestions();
     let backend_changed = settings.normalize_backend_for_platform();
-    if settings.dismissed_suggestions.len() != dismissed_count || backend_changed {
+    let hotkeys_changed = settings.normalize_hotkeys_for_platform();
+    if settings.dismissed_suggestions.len() != dismissed_count || backend_changed || hotkeys_changed
+    {
         // Best-effort migration: the in-memory value is bounded even if the
         // existing settings file cannot be rewritten.
         let _ = save(&settings);

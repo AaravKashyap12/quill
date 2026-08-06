@@ -1,8 +1,10 @@
 import {
+  AlertCircle,
   AudioLines,
   BookOpen,
   Check,
   CircleHelp,
+  Download,
   LockKeyhole,
   Settings2,
 } from "lucide-react";
@@ -10,11 +12,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 import { BrandMark } from "./components/BrandMark";
+import {
+  FirstRunSetup,
+  type SpeechSetupState,
+} from "./components/FirstRunSetup";
 import { RecordingOverlay } from "./components/RecordingOverlay";
 import { RecoveryBanner } from "./components/RecoveryBanner";
 import { ScribeReviewWindow } from "./components/ScribeReviewWindow";
 import { defaultSettings, initialRuntimeStatus } from "./defaults";
-import { detectProviders, loadSettings, persistSettings, previewMode } from "./tauri";
+import {
+  detectProviders,
+  downloadWhisperModel,
+  listInstalledWhisperModels,
+  loadSettings,
+  persistSettings,
+  previewMode,
+} from "./tauri";
 import type {
   AppSettings,
   HotkeyConfig,
@@ -26,7 +39,11 @@ import type {
 import { AboutView } from "./views/AboutView";
 import { DictionaryView } from "./views/DictionaryView";
 import { GeneralView } from "./views/GeneralView";
-import { VoiceView } from "./views/VoiceView";
+import { modelsForLanguage, VoiceView } from "./views/VoiceView";
+
+const ENGLISH_FIRST_RUN_MODEL = "medium.en";
+const MULTILINGUAL_FIRST_RUN_MODEL = "medium";
+const MEDIUM_MODEL_BYTES = 1_533_763_425;
 
 const navigation = [
   { id: "general" as const, label: "General", icon: Settings2 },
@@ -42,6 +59,14 @@ export function App() {
   const [runtime, setRuntime] = useState<RuntimeStatus>(initialRuntimeStatus);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [providersChecked, setProvidersChecked] = useState(false);
+  const [speechSetup, setSpeechSetup] = useState<SpeechSetupState>({
+    phase: "checking",
+    modelId: ENGLISH_FIRST_RUN_MODEL,
+    bytesDownloaded: 0,
+    bytesTotal: MEDIUM_MODEL_BYTES,
+    error: null,
+  });
   const overlayOnly = new URLSearchParams(window.location.search).has("overlay");
   const reviewOnly = new URLSearchParams(window.location.search).has("review");
   const overlayMode =
@@ -51,10 +76,134 @@ export function App() {
   const savedSettings = useRef<AppSettings>(defaultSettings);
 
   useEffect(() => {
-    void loadSettings().then((loaded) => {
-      savedSettings.current = loaded;
-      setSettings(loaded);
+    let disposed = false;
+    void initialiseSpeechSetup().catch((error) => {
+      if (disposed) return;
+      setSpeechSetup((current) => ({
+        ...current,
+        phase: "error",
+        error: error instanceof Error ? error.message : String(error),
+      }));
     });
+
+    async function initialiseSpeechSetup() {
+      const [loaded, installed] = await Promise.all([
+        loadSettings(),
+        listInstalledWhisperModels(),
+      ]);
+      if (disposed) return;
+
+      let next = loaded;
+      const languageModels = modelsForLanguage(loaded.language);
+      const selectedModelIsUsable =
+        installed.includes(loaded.whisperModel) &&
+        languageModels.some((model) => model.id === loaded.whisperModel);
+      const compatibleInstalled = languageModels.find((model) =>
+        installed.includes(model.id),
+      );
+      const usableModelId = selectedModelIsUsable
+        ? loaded.whisperModel
+        : compatibleInstalled?.id;
+      if (usableModelId) {
+        if (loaded.whisperModel !== usableModelId) {
+          next = { ...next, whisperModel: usableModelId };
+        }
+        if (!next.speechModelSetupAttempted) {
+          next = { ...next, speechModelSetupAttempted: true };
+        }
+        if (next !== loaded) await persistSettings(next);
+        savedSettings.current = next;
+        setSettings(next);
+        setSpeechSetup({
+          phase: "ready",
+          modelId: next.whisperModel,
+          bytesDownloaded: 0,
+          bytesTotal: 0,
+          error: null,
+        });
+        return;
+      }
+
+      const modelId = loaded.language === "en"
+        ? ENGLISH_FIRST_RUN_MODEL
+        : MULTILINGUAL_FIRST_RUN_MODEL;
+      if (!loaded.speechModelSetupAttempted) {
+        next = {
+          ...loaded,
+          whisperModel: modelId,
+          speechModelSetupAttempted: true,
+        };
+        await persistSettings(next);
+        savedSettings.current = next;
+        setSettings(next);
+        void startSpeechDownload(modelId);
+      } else {
+        savedSettings.current = loaded;
+        setSettings(loaded);
+        setSpeechSetup({
+          phase: "missing",
+          modelId: loaded.whisperModel || modelId,
+          bytesDownloaded: 0,
+          bytesTotal: MEDIUM_MODEL_BYTES,
+          error: "The speech model is not installed.",
+        });
+      }
+    }
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const unlistenProgress = listen<{
+      id: string;
+      bytesDownloaded: number;
+      bytesTotal: number;
+    }>("model-download://progress", (event) => {
+      setSpeechSetup((current) =>
+        event.payload.id === current.modelId
+          ? {
+              ...current,
+              phase: "downloading",
+              bytesDownloaded: event.payload.bytesDownloaded,
+              bytesTotal: event.payload.bytesTotal || current.bytesTotal,
+              error: null,
+            }
+          : current,
+      );
+    });
+    const unlistenComplete = listen<{ id: string; ok: boolean; error: string | null }>(
+      "model-download://complete",
+      (event) => {
+        setSpeechSetup((current) => {
+          if (event.payload.id !== current.modelId) return current;
+          return event.payload.ok
+            ? {
+                ...current,
+                phase: "ready",
+                bytesDownloaded: current.bytesTotal,
+                error: null,
+              }
+            : {
+                ...current,
+                phase: "error",
+                error: event.payload.error ?? "The speech model download failed.",
+              };
+        });
+      },
+    );
+    return () => {
+      void unlistenProgress.then((dispose) => dispose());
+      void unlistenComplete.then((dispose) => dispose());
+    };
+  }, []);
+
+  useEffect(() => {
+    void refreshProviders()
+      .catch(() => setProviders([]))
+      .finally(() => setProvidersChecked(true));
   }, []);
 
   useEffect(() => {
@@ -108,6 +257,61 @@ export function App() {
     setProviders(await detectProviders());
   }
 
+  async function startSpeechDownload(modelId = speechSetup.modelId) {
+    setSpeechSetup({
+      phase: "downloading",
+      modelId,
+      bytesDownloaded: 0,
+      bytesTotal: MEDIUM_MODEL_BYTES,
+      error: null,
+    });
+    try {
+      await downloadWhisperModel(modelId);
+    } catch (error) {
+      setSpeechSetup((current) => ({
+        ...current,
+        phase: "error",
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+
+  function openVoiceSetup(target: "speech" | "scribe") {
+    setSection("voice");
+    if (target === "scribe") void refreshProviders();
+    window.setTimeout(() => {
+      document
+        .getElementById(target === "scribe" ? "scribe-title" : "recognition-title")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
+  }
+
+  function dismissScribeSetup() {
+    const persisted = {
+      ...savedSettings.current,
+      scribeSetupDismissed: true,
+    };
+    savedSettings.current = persisted;
+    setSettings((current) => ({ ...current, scribeSetupDismissed: true }));
+    void persistSettings(persisted);
+  }
+
+  const scribeReady = providers.some(
+    (provider) => provider.available && provider.models.length > 0,
+  );
+  const showScribeSetup =
+    providersChecked &&
+    settings.cleanupProvider !== "disabled" &&
+    !settings.scribeSetupDismissed &&
+    !scribeReady;
+  const speechPercent =
+    speechSetup.bytesTotal > 0
+      ? Math.min(
+          100,
+          Math.round((speechSetup.bytesDownloaded / speechSetup.bytesTotal) * 100),
+        )
+      : 0;
+
   if (reviewOnly) {
     return <ScribeReviewWindow />;
   }
@@ -144,10 +348,43 @@ export function App() {
         <div className="sidebar-foot">
           {/* Engine state lives with the app chrome, not in a full-width band
               across every settings page. */}
-          <div className={`engine-state is-${runtime.state}`} role="status">
-            <i aria-hidden="true" />
-            <span>{runtime.message}</span>
-          </div>
+          {speechSetup.phase === "ready" ? (
+            <div className={`engine-state is-${runtime.state}`} role="status">
+              <i aria-hidden="true" />
+              <span>{runtime.message}</span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className={`sidebar-download is-${speechSetup.phase}`}
+              onClick={() => openVoiceSetup("speech")}
+              aria-label="Open speech model setup"
+            >
+              <span className="sidebar-download__title">
+                {speechSetup.phase === "error" || speechSetup.phase === "missing" ? (
+                  <AlertCircle size={13} />
+                ) : (
+                  <Download size={13} />
+                )}
+                {speechSetup.phase === "error" || speechSetup.phase === "missing"
+                  ? "Speech model needs attention"
+                  : `Downloading ${speechSetup.modelId}`}
+              </span>
+              {speechSetup.phase === "downloading" ? (
+                <span className="sidebar-download__progress" aria-hidden="true">
+                  <i style={{ width: `${speechPercent}%` }} />
+                </span>
+              ) : null}
+              <small>
+                {speechSetup.phase === "downloading"
+                  ? `${speechPercent}% · ${Math.max(
+                      0,
+                      Math.round((speechSetup.bytesTotal - speechSetup.bytesDownloaded) / 1_000_000),
+                    )} MB left`
+                  : "Open Voice to retry"}
+              </small>
+            </button>
+          )}
           <div className="sidebar-privacy">
             <LockKeyhole size={14} />
             <span>Processing stays on this device</span>
@@ -158,6 +395,15 @@ export function App() {
       <section className="workspace">
         <div className="content-scroll">
           <RecoveryBanner />
+          {section === "general" ? (
+            <FirstRunSetup
+              speech={speechSetup}
+              showScribeSetup={showScribeSetup}
+              onOpenVoice={openVoiceSetup}
+              onRetrySpeech={() => void startSpeechDownload()}
+              onDismissScribe={dismissScribeSetup}
+            />
+          ) : null}
           {section === "general" ? (
             <GeneralView
               settings={settings}

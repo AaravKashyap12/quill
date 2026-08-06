@@ -45,22 +45,41 @@ pub fn spawn(app: AppHandle, settings: Arc<RwLock<AppSettings>>, hotkey_capture:
                 );
                 return;
             };
+            let mut last_failure = String::new();
             loop {
                 if let Err(error) = runtime.block_on(run(
                     app.clone(),
                     Arc::clone(&settings),
                     Arc::clone(&hotkey_capture),
                 )) {
-                    tracing::error!(%error, "speech session loop failed; restarting");
+                    let error_text = error.to_string();
+                    let waiting_for_model = error_text.contains("is not installed");
+                    if error_text != last_failure {
+                        if waiting_for_model {
+                            tracing::info!("speech model is not installed; waiting for setup");
+                        } else {
+                            tracing::error!(%error, "speech session loop failed; restarting");
+                        }
+                        last_failure = error_text.clone();
+                    }
                     hide_overlay(&app);
+                    let status_message = if waiting_for_model {
+                        "Waiting for the speech model download".to_owned()
+                    } else {
+                        format!("Restarting local speech engine: {error}")
+                    };
                     emit_status(
                         &app,
-                        "processing",
+                        if waiting_for_model {
+                            "error"
+                        } else {
+                            "processing"
+                        },
                         None,
-                        &format!("Restarting local speech engine: {error}"),
+                        &status_message,
                         None,
                     );
-                    std::thread::sleep(Duration::from_secs(1));
+                    std::thread::sleep(Duration::from_secs(if waiting_for_model { 2 } else { 1 }));
                 }
             }
         })

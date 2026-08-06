@@ -9,6 +9,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 import { LanguageCombobox } from "../components/LanguageCombobox";
+import { detectPlatform } from "../platform";
 import { ProviderBadge } from "../components/ProviderBadge";
 import { SettingRow } from "../components/SettingRow";
 import {
@@ -86,7 +87,7 @@ const whisperModels: readonly WhisperModelInfo[] = [
     fileSize: "142 MB",
     bytes: 147_951_465,
     hardware: "1 GB VRAM or 2 GB free RAM",
-    fit: "Bundled default — good English on any laptop",
+    fit: "Lightweight English — good on older or memory-limited laptops",
     speed: "Fast",
     accuracy: "Good",
     multilingual: false,
@@ -134,7 +135,7 @@ const whisperModels: readonly WhisperModelInfo[] = [
     fileSize: "1.5 GB",
     bytes: 1_533_763_425,
     hardware: "5 GB VRAM or 8 GB free RAM",
-    fit: "Excellent English — meetings, long-form, difficult accents",
+    fit: "Automatic first-run model — excellent English for long-form dictation",
     speed: "Slow",
     accuracy: "Excellent",
     multilingual: false,
@@ -320,15 +321,6 @@ const providerInstallers = [
     url: "https://lmstudio.ai",
   },
 ];
-
-function detectPlatform(): "win" | "mac" | "linux" {
-  const p = (
-    typeof navigator !== "undefined" ? navigator.platform ?? "" : ""
-  ).toLowerCase();
-  if (p.startsWith("mac")) return "mac";
-  if (p.startsWith("linux")) return "linux";
-  return "win";
-}
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(2)} GB`;

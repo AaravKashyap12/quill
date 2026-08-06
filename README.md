@@ -213,9 +213,11 @@ macOS with Metal:
 ./scripts/build-whisper.sh metal
 ```
 
-Speech models are not bundled with the installer. Download one from **Voice →
-Compare and download models**; Quill stores it in the platform application-data
-`models/` folder and verifies its SHA-256 digest before making it available.
+Speech models are not bundled with the installer. On first launch Quill selects
+and downloads the compatible `medium` model automatically, with progress shown
+in the setup sheet and sidebar. Models can still be changed or removed from
+**Voice → Compare and download models**. Quill stores them in the platform
+application-data `models/` folder and verifies each SHA-256 digest before use.
 NVIDIA users can likewise download the optional CUDA runtime from **Voice →
 Compute backend**. Quill verifies the archive before installation, and selecting
 CUDA without the pack keeps transcription available on CPU with a visible status.
