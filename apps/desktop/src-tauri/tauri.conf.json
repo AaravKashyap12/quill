@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Quill",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "dev.quill.dictation",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -123,7 +123,9 @@
       "endpoints": [
         "https://github.com/AaravKashyap12/quill/releases/latest/download/latest.json"
       ],
-      "dialog": true,
+      "windows": {
+        "installMode": "passive"
+      },
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDExMEZDODYzNzBCNEI1QkIKUldTN3RiUndZOGdQRWRtN29JZ3g4bDdMQlZ6Z3dYSE0wRCswVk14S0Z1eDd3RXRybG5wSkFnczgK"
     }
   }

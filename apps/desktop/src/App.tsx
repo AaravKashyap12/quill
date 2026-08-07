@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 import { BrandMark } from "./components/BrandMark";
+import { AppUpdateBanner } from "./components/AppUpdateBanner";
 import {
   FirstRunSetup,
   type SpeechSetupState,
@@ -393,6 +394,15 @@ export function App() {
       </aside>
 
       <section className="workspace">
+        <AppUpdateBanner
+          blockedReason={
+            dirty
+              ? "Save or discard your settings before updating."
+              : runtime.state === "listening" || runtime.state === "processing"
+                ? "Finish the current session before updating."
+                : null
+          }
+        />
         <div className="content-scroll">
           <RecoveryBanner />
           {section === "general" ? (

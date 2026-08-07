@@ -1,3 +1,4 @@
+mod app_updates;
 mod asr;
 mod audio;
 mod cleanup;
@@ -425,6 +426,7 @@ pub fn run() {
             _log_guard: log_guard,
         })
         .manage(review::ReviewStore::default())
+        .manage(app_updates::PendingUpdate::default())
         .manage(downloads::DownloadState::default())
         .manage(ollama::OllamaPullState::default())
         .setup(move |app| {
@@ -519,6 +521,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
+            app_updates::check_app_update,
+            app_updates::install_app_update,
             detect_local_providers,
             get_pending_recovery,
             discard_recovery,

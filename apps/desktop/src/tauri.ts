@@ -1,9 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@tauri-apps/api/core";
 import { defaultSettings } from "./defaults";
 import { capDismissedSuggestions } from "./dictionary";
 import type {
   AppSettings,
+  AppUpdateEvent,
+  AppUpdateInfo,
   CudaRuntimeStatus,
   DictionarySuggestion,
   Mode,
@@ -12,6 +14,32 @@ import type {
   RecoveryManifest,
   ScribeReviewDraft,
 } from "./types";
+
+export async function checkAppUpdate(): Promise<AppUpdateInfo | null> {
+  if (!isTauri()) {
+    return new URLSearchParams(window.location.search).has("update")
+      ? { version: "0.2.2", currentVersion: "0.2.1" }
+      : null;
+  }
+  return invoke<AppUpdateInfo | null>("check_app_update");
+}
+
+export async function installAppUpdate(
+  onEvent: (event: AppUpdateEvent) => void,
+): Promise<void> {
+  if (!isTauri()) {
+    onEvent({ event: "Started", data: { contentLength: 12_000_000 } });
+    for (const chunkLength of [2_400_000, 3_000_000, 3_600_000, 3_000_000]) {
+      await new Promise((resolve) => window.setTimeout(resolve, 90));
+      onEvent({ event: "Progress", data: { chunkLength } });
+    }
+    onEvent({ event: "Downloaded" });
+    return;
+  }
+  const onEventChannel = new Channel<AppUpdateEvent>();
+  onEventChannel.onmessage = onEvent;
+  await invoke("install_app_update", { onEvent: onEventChannel });
+}
 
 export async function loadSettings(): Promise<AppSettings> {
   if (!isTauri()) {

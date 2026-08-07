@@ -62,6 +62,16 @@ export interface RuntimeStatus {
   provider: string | null;
 }
 
+export interface AppUpdateInfo {
+  version: string;
+  currentVersion: string;
+}
+
+export type AppUpdateEvent =
+  | { event: "Started"; data: { contentLength: number | null } }
+  | { event: "Progress"; data: { chunkLength: number } }
+  | { event: "Downloaded" };
+
 export interface ScribeReviewDraft {
   id: number;
   source: string;
