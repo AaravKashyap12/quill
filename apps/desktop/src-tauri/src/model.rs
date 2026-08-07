@@ -83,6 +83,8 @@ pub struct AppSettings {
     pub speech_model_setup_attempted: bool,
     #[serde(default)]
     pub scribe_setup_dismissed: bool,
+    #[serde(default)]
+    pub onboarding_completed: bool,
 }
 
 impl Default for AppSettings {
@@ -132,6 +134,7 @@ impl Default for AppSettings {
             dismissed_suggestions: Vec::new(),
             speech_model_setup_attempted: false,
             scribe_setup_dismissed: false,
+            onboarding_completed: false,
         }
     }
 }
@@ -257,12 +260,14 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("scribeSetupDismissed");
+        value.as_object_mut().unwrap().remove("onboardingCompleted");
         let restored: AppSettings = serde_json::from_value(value).unwrap();
         assert!(restored.dictionary.is_empty());
         assert!(restored.dismissed_suggestions.is_empty());
         assert_eq!(restored.default_register, Register::Generic);
         assert!(!restored.speech_model_setup_attempted);
         assert!(!restored.scribe_setup_dismissed);
+        assert!(!restored.onboarding_completed);
     }
 
     #[test]

@@ -20,10 +20,13 @@ import {
 import { RecordingOverlay } from "./components/RecordingOverlay";
 import { RecoveryBanner } from "./components/RecoveryBanner";
 import { ScribeReviewWindow } from "./components/ScribeReviewWindow";
+import { Onboarding } from "./components/Onboarding";
 import { defaultSettings, initialRuntimeStatus } from "./defaults";
+import { modelDownloadBytes } from "./onboarding";
 import {
   detectProviders,
   downloadWhisperModel,
+  getSystemProfile,
   listInstalledWhisperModels,
   loadSettings,
   persistSettings,
@@ -36,15 +39,14 @@ import type {
   NavigationSection,
   ProviderStatus,
   RuntimeStatus,
+  SystemProfile,
 } from "./types";
 import { AboutView } from "./views/AboutView";
 import { DictionaryView } from "./views/DictionaryView";
 import { GeneralView } from "./views/GeneralView";
 import { modelsForLanguage, VoiceView } from "./views/VoiceView";
 
-const ENGLISH_FIRST_RUN_MODEL = "medium.en";
-const MULTILINGUAL_FIRST_RUN_MODEL = "medium";
-const MEDIUM_MODEL_BYTES = 1_533_763_425;
+const FALLBACK_MODEL_BYTES = 147_951_465;
 
 const navigation = [
   { id: "general" as const, label: "General", icon: Settings2 },
@@ -61,11 +63,14 @@ export function App() {
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
   const [providersChecked, setProvidersChecked] = useState(false);
+  const [initialising, setInitialising] = useState(true);
+  const [onboardingRequired, setOnboardingRequired] = useState(false);
+  const [systemProfile, setSystemProfile] = useState<SystemProfile | null>(null);
   const [speechSetup, setSpeechSetup] = useState<SpeechSetupState>({
     phase: "checking",
-    modelId: ENGLISH_FIRST_RUN_MODEL,
+    modelId: "base.en",
     bytesDownloaded: 0,
-    bytesTotal: MEDIUM_MODEL_BYTES,
+    bytesTotal: FALLBACK_MODEL_BYTES,
     error: null,
   });
   const overlayOnly = new URLSearchParams(window.location.search).has("overlay");
@@ -80,6 +85,7 @@ export function App() {
     let disposed = false;
     void initialiseSpeechSetup().catch((error) => {
       if (disposed) return;
+      setInitialising(false);
       setSpeechSetup((current) => ({
         ...current,
         phase: "error",
@@ -88,11 +94,13 @@ export function App() {
     });
 
     async function initialiseSpeechSetup() {
-      const [loaded, installed] = await Promise.all([
+      const [loaded, installed, profile] = await Promise.all([
         loadSettings(),
         listInstalledWhisperModels(),
+        getSystemProfile(),
       ]);
       if (disposed) return;
+      setSystemProfile(profile);
 
       let next = loaded;
       const languageModels = modelsForLanguage(loaded.language);
@@ -109,8 +117,12 @@ export function App() {
         if (loaded.whisperModel !== usableModelId) {
           next = { ...next, whisperModel: usableModelId };
         }
-        if (!next.speechModelSetupAttempted) {
-          next = { ...next, speechModelSetupAttempted: true };
+        if (!next.speechModelSetupAttempted || !next.onboardingCompleted) {
+          next = {
+            ...next,
+            speechModelSetupAttempted: true,
+            onboardingCompleted: true,
+          };
         }
         if (next !== loaded) await persistSettings(next);
         savedSettings.current = next;
@@ -122,33 +134,23 @@ export function App() {
           bytesTotal: 0,
           error: null,
         });
+        setOnboardingRequired(false);
+        setInitialising(false);
         return;
       }
 
-      const modelId = loaded.language === "en"
-        ? ENGLISH_FIRST_RUN_MODEL
-        : MULTILINGUAL_FIRST_RUN_MODEL;
-      if (!loaded.speechModelSetupAttempted) {
-        next = {
-          ...loaded,
-          whisperModel: modelId,
-          speechModelSetupAttempted: true,
-        };
-        await persistSettings(next);
-        savedSettings.current = next;
-        setSettings(next);
-        void startSpeechDownload(modelId);
-      } else {
-        savedSettings.current = loaded;
-        setSettings(loaded);
-        setSpeechSetup({
-          phase: "missing",
-          modelId: loaded.whisperModel || modelId,
-          bytesDownloaded: 0,
-          bytesTotal: MEDIUM_MODEL_BYTES,
-          error: "The speech model is not installed.",
-        });
-      }
+      const modelId = loaded.whisperModel || (loaded.language === "en" ? "base.en" : "base");
+      savedSettings.current = loaded;
+      setSettings(loaded);
+      setSpeechSetup({
+        phase: "missing",
+        modelId,
+        bytesDownloaded: 0,
+        bytesTotal: modelDownloadBytes(modelId) || FALLBACK_MODEL_BYTES,
+        error: loaded.onboardingCompleted ? "The speech model is not installed." : null,
+      });
+      setOnboardingRequired(!loaded.onboardingCompleted);
+      setInitialising(false);
     }
 
     return () => {
@@ -263,7 +265,7 @@ export function App() {
       phase: "downloading",
       modelId,
       bytesDownloaded: 0,
-      bytesTotal: MEDIUM_MODEL_BYTES,
+      bytesTotal: modelDownloadBytes(modelId) || FALLBACK_MODEL_BYTES,
       error: null,
     });
     try {
@@ -275,6 +277,33 @@ export function App() {
         error: error instanceof Error ? error.message : String(error),
       }));
     }
+  }
+
+  async function startOnboardingSpeech(modelId: string, language: string) {
+    const next = {
+      ...savedSettings.current,
+      language,
+      whisperModel: modelId,
+      speechModelSetupAttempted: true,
+    };
+    await persistSettings(next);
+    savedSettings.current = next;
+    setSettings(next);
+    await startSpeechDownload(modelId);
+  }
+
+  async function finishOnboarding(openScribe: boolean) {
+    const next = {
+      ...savedSettings.current,
+      onboardingCompleted: true,
+      scribeSetupDismissed:
+        openScribe || scribeReady ? savedSettings.current.scribeSetupDismissed : true,
+    };
+    await persistSettings(next);
+    savedSettings.current = next;
+    setSettings(next);
+    setOnboardingRequired(false);
+    if (openScribe) openVoiceSetup("scribe");
   }
 
   function openVoiceSetup(target: "speech" | "scribe") {
@@ -322,6 +351,29 @@ export function App() {
       <main className="overlay-page">
         <RecordingOverlay mode={overlayMode} />
       </main>
+    );
+  }
+
+  if (initialising || (onboardingRequired && !systemProfile)) {
+    return (
+      <main className="onboarding-page is-loading" role="status" aria-live="polite">
+        <span className="onboarding-wordmark">Quill</span>
+        <p>Checking this computer…</p>
+      </main>
+    );
+  }
+
+  if (onboardingRequired && systemProfile) {
+    return (
+      <Onboarding
+        settings={settings}
+        profile={systemProfile}
+        speech={speechSetup}
+        scribeReady={scribeReady}
+        onStartSpeech={startOnboardingSpeech}
+        onRetrySpeech={() => void startSpeechDownload()}
+        onFinish={finishOnboarding}
+      />
     );
   }
 

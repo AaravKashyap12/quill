@@ -13,6 +13,7 @@ import type {
   Register,
   RecoveryManifest,
   ScribeReviewDraft,
+  SystemProfile,
 } from "./types";
 
 export async function checkAppUpdate(): Promise<AppUpdateInfo | null> {
@@ -92,6 +93,20 @@ export async function listInstalledWhisperModels(): Promise<string[]> {
       : ["base.en"];
   }
   return invoke<string[]>("list_installed_whisper_models");
+}
+
+export async function getSystemProfile(): Promise<SystemProfile> {
+  if (!isTauri()) {
+    const memoryGiB = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8;
+    return {
+      totalMemoryBytes: memoryGiB * 1024 ** 3,
+      availableMemoryBytes: memoryGiB * 0.65 * 1024 ** 3,
+      logicalCpuCount: navigator.hardwareConcurrency || 4,
+      platform: navigator.platform || "browser",
+      architecture: "preview",
+    };
+  }
+  return invoke<SystemProfile>("get_system_profile");
 }
 
 export async function downloadWhisperModel(id: string): Promise<void> {

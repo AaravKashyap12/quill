@@ -30,6 +30,7 @@ export const defaultSettings: AppSettings = {
   dismissedSuggestions: [],
   speechModelSetupAttempted: false,
   scribeSetupDismissed: false,
+  onboardingCompleted: false,
 };
 
 export const initialRuntimeStatus: RuntimeStatus = {

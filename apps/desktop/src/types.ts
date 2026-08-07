@@ -39,6 +39,15 @@ export interface AppSettings {
   dismissedSuggestions: DictionarySuggestion[];
   speechModelSetupAttempted: boolean;
   scribeSetupDismissed: boolean;
+  onboardingCompleted: boolean;
+}
+
+export interface SystemProfile {
+  totalMemoryBytes: number;
+  availableMemoryBytes: number;
+  logicalCpuCount: number;
+  platform: string;
+  architecture: string;
 }
 
 export interface ProviderStatus {

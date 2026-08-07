@@ -15,6 +15,7 @@ mod review;
 mod session;
 mod settings;
 mod streaming;
+mod system_profile;
 
 use crate::model::{AppSettings, Mode, ProviderStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -528,6 +529,7 @@ pub fn run() {
             discard_recovery,
             list_audio_input_devices,
             list_installed_whisper_models,
+            system_profile::get_system_profile,
             downloads::get_cuda_runtime_status,
             preview_mode,
             set_hotkey_capture,
