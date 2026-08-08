@@ -15,7 +15,7 @@ use crate::register::Register;
 use crate::streaming::{LocalAgreement, TimedWord};
 use anyhow::{anyhow, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -28,7 +28,117 @@ const MIN_AUDIO_MS: u64 = 800;
 /// off-loaded to a background thread anyway.
 const AUDIO_CHECKPOINT_INTERVAL_MS: u64 = 15_000;
 
-pub fn spawn(app: AppHandle, settings: Arc<RwLock<AppSettings>>, hotkey_capture: Arc<AtomicBool>) {
+#[derive(Default)]
+struct SessionControlState {
+    update_requested: bool,
+    engine_stopped: bool,
+    session_active: bool,
+}
+
+/// Coordinates the long-lived speech thread with the updater. Windows cannot
+/// replace whisper.cpp DLLs while the sidecar has them mapped, so installation
+/// waits for an explicit stopped acknowledgement rather than relying on app
+/// process shutdown timing.
+#[derive(Default)]
+pub struct SessionControl {
+    state: Mutex<SessionControlState>,
+    changed: Condvar,
+}
+
+impl SessionControl {
+    pub fn stop_for_update(&self, timeout: Duration) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "The speech engine state is unavailable".to_string())?;
+        if state.session_active {
+            return Err(
+                "Finish the current dictation before installing the update, then try again."
+                    .to_string(),
+            );
+        }
+
+        state.update_requested = true;
+        self.changed.notify_all();
+        let (mut state, result) = self
+            .changed
+            .wait_timeout_while(state, timeout, |state| !state.engine_stopped)
+            .map_err(|_| "The speech engine state is unavailable".to_string())?;
+        if result.timed_out() && !state.engine_stopped {
+            state.update_requested = false;
+            self.changed.notify_all();
+            return Err(
+                "Quill could not stop the local speech engine. Quit Quill from the tray and run the installer again."
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    pub fn resume_after_failed_update(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.update_requested = false;
+            state.engine_stopped = false;
+            self.changed.notify_all();
+        }
+    }
+
+    fn stop_requested(&self) -> bool {
+        self.state
+            .lock()
+            .map(|state| state.update_requested)
+            .unwrap_or(true)
+    }
+
+    fn park_engine_for_update(&self) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        if !state.update_requested {
+            return;
+        }
+        state.engine_stopped = true;
+        self.changed.notify_all();
+        while state.update_requested {
+            let Ok(next) = self.changed.wait(state) else {
+                return;
+            };
+            state = next;
+        }
+        state.engine_stopped = false;
+    }
+
+    fn try_start_session(self: &Arc<Self>) -> Option<SessionActivity> {
+        let mut state = self.state.lock().ok()?;
+        if state.update_requested || state.session_active {
+            return None;
+        }
+        state.session_active = true;
+        Some(SessionActivity(Arc::clone(self)))
+    }
+
+    fn finish_session(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.session_active = false;
+            self.changed.notify_all();
+        }
+    }
+}
+
+struct SessionActivity(Arc<SessionControl>);
+
+impl Drop for SessionActivity {
+    fn drop(&mut self) {
+        self.0.finish_session();
+    }
+}
+
+pub fn spawn(
+    app: AppHandle,
+    settings: Arc<RwLock<AppSettings>>,
+    hotkey_capture: Arc<AtomicBool>,
+    control: Arc<SessionControl>,
+) {
     std::thread::Builder::new()
         .name("quill-session".into())
         .spawn(move || {
@@ -47,11 +157,16 @@ pub fn spawn(app: AppHandle, settings: Arc<RwLock<AppSettings>>, hotkey_capture:
             };
             let mut last_failure = String::new();
             loop {
+                control.park_engine_for_update();
                 if let Err(error) = runtime.block_on(run(
                     app.clone(),
                     Arc::clone(&settings),
                     Arc::clone(&hotkey_capture),
+                    Arc::clone(&control),
                 )) {
+                    if control.stop_requested() {
+                        continue;
+                    }
                     let error_text = error.to_string();
                     let waiting_for_model = error_text.contains("is not installed");
                     if error_text != last_failure {
@@ -90,6 +205,7 @@ async fn run(
     app: AppHandle,
     shared_settings: Arc<RwLock<AppSettings>>,
     hotkey_capture: Arc<AtomicBool>,
+    control: Arc<SessionControl>,
 ) -> Result<()> {
     let startup_settings = read_settings(&shared_settings)?;
     emit_status(&app, "processing", None, "Loading whisper.cpp", None);
@@ -121,6 +237,10 @@ async fn run(
     let mut deferred_insertions: Vec<DeferredInsertion> = Vec::new();
 
     loop {
+        if control.stop_requested() {
+            server.shutdown().await?;
+            return Ok(());
+        }
         let settings = read_settings(&shared_settings)?;
 
         // Hot-swap the whisper.cpp server when the user picks a different
@@ -151,7 +271,7 @@ async fn run(
                 &format!("Reloading whisper.cpp with {}", settings.whisper_model),
                 None,
             );
-            drop(server);
+            server.shutdown().await?;
             server = WhisperServer::start(&app, &settings).await?;
             loaded_model = settings.whisper_model.clone();
             loaded_backend = settings.backend;
@@ -225,12 +345,18 @@ async fn run(
                 }
             }
             if let Some(mode) = desired_mode {
-                active = Some(ActiveSession::start(
-                    mode,
-                    settings.clone(),
-                    &app,
-                    carried_target,
-                )?);
+                if let Some(activity) = control.try_start_session() {
+                    active = Some(ActiveSession::start(
+                        mode,
+                        settings.clone(),
+                        &app,
+                        carried_target,
+                        activity,
+                    )?);
+                } else {
+                    dictation_key.unlock();
+                    scribe_key.unlock();
+                }
             }
         }
 
@@ -284,6 +410,7 @@ impl KeyRuntime {
 }
 
 struct ActiveSession {
+    _activity: SessionActivity,
     recovery_id: String,
     mode: Mode,
     settings: AppSettings,
@@ -310,6 +437,7 @@ impl ActiveSession {
         settings: AppSettings,
         app: &AppHandle,
         carried_target: Option<injection::InsertionTarget>,
+        activity: SessionActivity,
     ) -> Result<Self> {
         // Capture before showing the overlay: the target is the text field
         // active at the hotkey, not Quill's own affordance or a later app.
@@ -336,6 +464,7 @@ impl ActiveSession {
             (mode == Mode::Scribe).then_some(settings.cleanup_base_url.as_str()),
         );
         Ok(Self {
+            _activity: activity,
             recovery_id: recovery::new_recovery_id(),
             mode,
             settings,
@@ -1036,6 +1165,38 @@ fn hide_overlay(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn updater_refuses_to_interrupt_an_active_session() {
+        let control = Arc::new(SessionControl::default());
+        let activity = control.try_start_session().expect("session should start");
+
+        let error = control
+            .stop_for_update(Duration::from_millis(10))
+            .expect_err("active speech must block installation");
+        assert!(error.contains("Finish the current dictation"));
+
+        drop(activity);
+        assert!(control.try_start_session().is_some());
+    }
+
+    #[test]
+    fn updater_waits_for_engine_stopped_acknowledgement() {
+        let control = Arc::new(SessionControl::default());
+        let worker_control = Arc::clone(&control);
+        let worker = std::thread::spawn(move || {
+            while !worker_control.stop_requested() {
+                std::thread::yield_now();
+            }
+            worker_control.park_engine_for_update();
+        });
+
+        control
+            .stop_for_update(Duration::from_secs(1))
+            .expect("engine should acknowledge update stop");
+        control.resume_after_failed_update();
+        worker.join().expect("engine worker should resume");
+    }
     use crate::model::{DictionaryEntry, DictionaryKind};
 
     #[test]

@@ -55,6 +55,25 @@ pub struct WhisperServer {
 }
 
 impl WhisperServer {
+    /// Stop the sidecar and wait until Windows/macOS has released its runtime
+    /// files. Merely signalling the child is not enough before an in-place
+    /// update: NSIS can begin replacing DLLs while the process is still
+    /// exiting, which aborts the installer with "Error opening file for
+    /// writing".
+    pub async fn shutdown(&mut self) -> Result<()> {
+        if self.child.try_wait()?.is_some() {
+            return Ok(());
+        }
+
+        self.child
+            .start_kill()
+            .context("failed to stop the local speech engine")?;
+        tokio::time::timeout(Duration::from_secs(5), self.child.wait())
+            .await
+            .context("timed out waiting for the local speech engine to stop")??;
+        Ok(())
+    }
+
     pub fn ready_message(&self) -> &'static str {
         if self.cuda_pack_missing {
             "Ready on CPU — CUDA runtime not installed"
@@ -617,6 +636,15 @@ fn is_control_token(text: &str) -> bool {
 impl Drop for WhisperServer {
     fn drop(&mut self) {
         let _ = self.child.start_kill();
+        // `Drop` also runs on error paths that cannot call the async shutdown
+        // method. Wait briefly so a supervisor restart or app update never
+        // races a still-exiting child that has the bundled DLLs mapped.
+        for _ in 0..100 {
+            match self.child.try_wait() {
+                Ok(Some(_)) | Err(_) => break,
+                Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            }
+        }
     }
 }
 

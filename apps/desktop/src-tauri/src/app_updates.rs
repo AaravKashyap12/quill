@@ -1,5 +1,7 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use crate::session::SessionControl;
 use serde::Serialize;
 use tauri::{ipc::Channel, AppHandle, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
@@ -58,13 +60,15 @@ pub async fn check_app_update(
     Ok(metadata)
 }
 
-/// Download, verify, install, and restart. Tauri verifies every artifact with
-/// the updater public key before installation. On Windows the installer may
-/// close Quill as part of the install; on macOS `restart` completes the handoff.
+/// Download, verify, stop the speech sidecar, install, and restart. Tauri
+/// verifies every artifact with the updater public key before installation.
+/// Stopping the sidecar explicitly is essential on Windows because its loaded
+/// whisper.cpp DLLs cannot be overwritten by NSIS.
 #[tauri::command]
 pub async fn install_app_update(
     app: AppHandle,
     pending: State<'_, PendingUpdate>,
+    session_control: State<'_, Arc<SessionControl>>,
     on_event: Channel<DownloadEvent>,
 ) -> Result<(), String> {
     let update = pending
@@ -75,8 +79,8 @@ pub async fn install_app_update(
         .ok_or_else(|| "There is no pending Quill update".to_string())?;
 
     let mut started = false;
-    if let Err(error) = update
-        .download_and_install(
+    let bytes = match update
+        .download(
             |chunk_length, content_length| {
                 if !started {
                     let _ = on_event.send(DownloadEvent::Started { content_length });
@@ -90,6 +94,41 @@ pub async fn install_app_update(
         )
         .await
     {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            *pending
+                .0
+                .lock()
+                .map_err(|_| "The update state is unavailable".to_string())? = Some(update);
+            return Err(error.to_string());
+        }
+    };
+
+    let control = Arc::clone(&session_control);
+    let stop_result = match tauri::async_runtime::spawn_blocking(move || {
+        control.stop_for_update(Duration::from_secs(10))
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            *pending
+                .0
+                .lock()
+                .map_err(|_| "The update state is unavailable".to_string())? = Some(update);
+            return Err(error.to_string());
+        }
+    };
+    if let Err(error) = stop_result {
+        *pending
+            .0
+            .lock()
+            .map_err(|_| "The update state is unavailable".to_string())? = Some(update);
+        return Err(error);
+    }
+
+    if let Err(error) = update.install(bytes) {
+        session_control.resume_after_failed_update();
         *pending
             .0
             .lock()

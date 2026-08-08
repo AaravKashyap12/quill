@@ -403,6 +403,8 @@ pub fn run() {
     let warmup_settings = Arc::clone(&shared_settings);
     let hotkey_capture = Arc::new(AtomicBool::new(false));
     let session_hotkey_capture = Arc::clone(&hotkey_capture);
+    let session_control = Arc::new(session::SessionControl::default());
+    let managed_session_control = Arc::clone(&session_control);
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -428,6 +430,7 @@ pub fn run() {
         })
         .manage(review::ReviewStore::default())
         .manage(app_updates::PendingUpdate::default())
+        .manage(managed_session_control)
         .manage(downloads::DownloadState::default())
         .manage(ollama::OllamaPullState::default())
         .setup(move |app| {
@@ -461,6 +464,7 @@ pub fn run() {
                 app.handle().clone(),
                 Arc::clone(&session_settings),
                 Arc::clone(&session_hotkey_capture),
+                Arc::clone(&session_control),
             );
             #[cfg(not(any(windows, target_os = "macos")))]
             let _ = &session_hotkey_capture;
