@@ -292,6 +292,7 @@ button:disabled {
 /* ── SIDEBAR FOOTER: engine status + privacy ─────────────── */
 .sidebar-foot {
   display: grid;
+  min-width: 0;
   gap: 8px;
   margin-top: auto;
   padding-top: 12px;
@@ -300,6 +301,9 @@ button:disabled {
 /* Runtime state lives here now instead of a full-width bottom bar. */
 .engine-state {
   display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
@@ -338,6 +342,8 @@ button:disabled {
 }
 
 .engine-state span {
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

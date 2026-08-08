@@ -48,6 +48,7 @@ export interface SystemProfile {
   logicalCpuCount: number;
   platform: string;
   architecture: string;
+  speechAcceleration: "cpu" | "metal" | "cuda";
 }
 
 export interface ProviderStatus {

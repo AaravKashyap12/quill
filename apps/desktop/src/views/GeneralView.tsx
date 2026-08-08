@@ -88,7 +88,7 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
           </SettingRow>
           <SettingRow
             label="Default style"
-            description="Used when Quill can't identify the app you're typing into. Scribe only â€” Dictation types verbatim."
+            description="Used when Quill can't identify the app you're typing into. Scribe only; Dictation types verbatim."
           >
             <select
               value={settings.defaultRegister}

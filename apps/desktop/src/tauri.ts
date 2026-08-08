@@ -104,6 +104,7 @@ export async function getSystemProfile(): Promise<SystemProfile> {
       logicalCpuCount: navigator.hardwareConcurrency || 4,
       platform: navigator.platform || "browser",
       architecture: "preview",
+      speechAcceleration: navigator.platform.toLowerCase().includes("mac") ? "metal" : "cpu",
     };
   }
   return invoke<SystemProfile>("get_system_profile");

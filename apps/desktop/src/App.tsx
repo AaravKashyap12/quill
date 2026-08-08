@@ -402,7 +402,7 @@ export function App() {
           {/* Engine state lives with the app chrome, not in a full-width band
               across every settings page. */}
           {speechSetup.phase === "ready" ? (
-            <div className={`engine-state is-${runtime.state}`} role="status">
+            <div className={`engine-state is-${runtime.state}`} role="status" title={runtime.message}>
               <i aria-hidden="true" />
               <span>{runtime.message}</span>
             </div>

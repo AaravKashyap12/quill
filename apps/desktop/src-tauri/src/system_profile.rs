@@ -8,6 +8,7 @@ pub struct SystemProfile {
     logical_cpu_count: usize,
     platform: &'static str,
     architecture: &'static str,
+    speech_acceleration: &'static str,
 }
 
 #[tauri::command]
@@ -22,6 +23,18 @@ pub fn get_system_profile() -> SystemProfile {
             .unwrap_or(1),
         platform: std::env::consts::OS,
         architecture: std::env::consts::ARCH,
+        speech_acceleration: speech_acceleration(),
+    }
+}
+
+fn speech_acceleration() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "metal"
+    } else {
+        // Quill has no DirectML or Intel GPU backend. Windows uses CUDA only
+        // after the optional runtime pack is installed, which happens after
+        // onboarding. A first-run recommendation must therefore assume CPU.
+        "cpu"
     }
 }
 
@@ -90,5 +103,6 @@ mod tests {
         assert!(profile.logical_cpu_count > 0);
         assert!(!profile.platform.is_empty());
         assert!(!profile.architecture.is_empty());
+        assert!(matches!(profile.speech_acceleration, "cpu" | "metal"));
     }
 }

@@ -12,7 +12,8 @@ export interface RecommendedModel {
 
 const GIB = 1024 ** 3;
 
-const MODEL_BYTES: Record<"base" | "small" | "medium", number> = {
+const MODEL_BYTES: Record<"tiny" | "base" | "small" | "medium", number> = {
+  tiny: 77_691_713,
   base: 147_951_465,
   small: 487_593_953,
   medium: 1_533_763_425,
@@ -26,7 +27,14 @@ function model(
   const englishSuffix = language === "english" ? ".en" : "";
   return {
     id: `${tier}${englishSuffix}`,
-    sizeLabel: tier === "base" ? "142 MB" : tier === "small" ? "466 MB" : "1.5 GB",
+    sizeLabel:
+      tier === "tiny"
+        ? "75 MB"
+        : tier === "base"
+          ? "142 MB"
+          : tier === "small"
+            ? "466 MB"
+            : "1.5 GB",
     bytes: MODEL_BYTES[tier],
     reason,
   };
@@ -47,6 +55,21 @@ export function recommendSpeechModel(
   const usableMemory = Math.min(totalBudget, availableBudget) / GIB;
   const canRunSmall = usableMemory >= 4 && profile.logicalCpuCount >= 4;
   const canRunMedium = usableMemory >= 8 && profile.logicalCpuCount >= 8;
+
+  if (profile.speechAcceleration === "cpu") {
+    if (priority === "accurate" && usableMemory >= 2 && profile.logicalCpuCount >= 8) {
+      return model(
+        "base",
+        language,
+        "Better accuracy while staying practical on CPU-only speech processing.",
+      );
+    }
+    return model(
+      "tiny",
+      language,
+      "Quill will use the CPU on this computer; Tiny keeps live dictation responsive.",
+    );
+  }
 
   if (priority === "fast") {
     return model("base", language, "Fast startup and the lightest load on your computer.");

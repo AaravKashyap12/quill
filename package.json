@@ -1,6 +1,6 @@
 {
   "name": "quill",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Free, local-first voice dictation with separate Dictation and Scribe hotkeys.",
   "license": "AGPL-3.0-or-later",

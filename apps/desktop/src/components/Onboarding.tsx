@@ -145,7 +145,7 @@ export function Onboarding({
             </h1>
             <p className="onboarding-lede compact">
               Quill detected {Math.max(1, Math.round(profile.totalMemoryBytes / 1024 ** 3))} GB of
-              memory and {profile.logicalCpuCount} processor threads.
+              memory and {profile.logicalCpuCount} processor threads. Speech will run on {profile.speechAcceleration === "cpu" ? "the CPU" : profile.speechAcceleration === "metal" ? "Metal acceleration" : "CUDA acceleration"}.
             </p>
 
             <fieldset className="onboarding-fieldset">
