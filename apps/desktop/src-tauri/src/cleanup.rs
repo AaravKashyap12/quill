@@ -917,9 +917,10 @@ mod tests {
     #[tokio::test]
     async fn oversized_input_falls_back_before_provider_discovery() {
         let transcript = "dictation ".repeat(MAX_PROMPT_TOKEN_ESTIMATE);
-        let outcome = clean_with_outcome(&AppSettings::default(), &transcript, Register::Notes, None)
-            .await
-            .unwrap();
+        let outcome =
+            clean_with_outcome(&AppSettings::default(), &transcript, Register::Notes, None)
+                .await
+                .unwrap();
         assert_eq!(outcome.guard_reason, Some(GuardReason::InputTooLong));
         assert!(outcome.model_output.is_empty());
         assert_eq!(outcome.delivered, safe_fallback(&transcript));

@@ -136,9 +136,14 @@ pub async fn regenerate_scribe_review(
         )
     };
 
-    let regenerated = match instruction.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    let regenerated = match instruction
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some(instruction) => {
-            cleanup::clean_with_instruction(&settings, &source, selected_register, instruction).await
+            cleanup::clean_with_instruction(&settings, &source, selected_register, instruction)
+                .await
         }
         None => cleanup::clean(&settings, &source, selected_register).await,
     };

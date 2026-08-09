@@ -177,13 +177,7 @@ pub fn spawn(
                         }
                         last_failure = error_text.clone();
                     }
-                    emit_voice_pill(
-                        &app,
-                        "error",
-                        None,
-                        Some("Couldn't process audio"),
-                        None,
-                    );
+                    emit_voice_pill(&app, "error", None, Some("Couldn't process audio"), None);
                     let status_message = if waiting_for_model {
                         "Waiting for the speech model download".to_owned()
                     } else {
