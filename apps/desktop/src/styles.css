@@ -3997,7 +3997,7 @@ button:disabled {
    surrounding surface. */
 .voice-pill-wrap {
   display: grid;
-  width: 316px;
+  width: 238px;
   height: 72px;
   place-items: center;
   pointer-events: none;
@@ -4008,7 +4008,7 @@ button:disabled {
   --pill-accent-soft: rgba(112, 150, 144, 0.18);
   position: relative;
   display: flex;
-  width: 252px;
+  width: 198px;
   height: 58px;
   align-items: center;
   gap: 12px;
@@ -4017,12 +4017,10 @@ button:disabled {
   color: #f1eee7;
   border: 1px solid rgba(255, 255, 255, 0.105);
   border-radius: 999px;
-  background: rgba(29, 30, 29, 0.985);
+  background: #1d1e1d;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.065),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.42),
-    0 5px 12px -8px rgba(0, 0, 0, 0.72),
-    0 14px 26px -22px rgba(0, 0, 0, 0.86);
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 3px 9px -4px rgba(0, 0, 0, 0.34);
   transition:
     width 300ms var(--ease-out),
     opacity 200ms var(--ease-out),
@@ -4037,7 +4035,10 @@ button:disabled {
   --pill-accent-soft: rgba(166, 128, 66, 0.18);
 }
 
-.voice-pill.is-complete,
+.voice-pill.is-complete {
+  width: 120px;
+}
+
 .voice-pill.is-error {
   width: 300px;
 }
@@ -4616,6 +4617,375 @@ button:disabled {
   border-top-color: #d0b98e;
   border-radius: 50%;
   animation: voice-ring-turn 1050ms linear infinite;
+}
+
+/* Motion-system v2 ---------------------------------------------------------
+   The outer .voice-pill is now the persistent surface. Motion for React owns
+   its bounds; the primitives below stay mounted while they become bars,
+   dots, a progress ring, and Scribe text lines. */
+.voice-pill {
+  display: block;
+  flex: none;
+  padding: 0;
+  animation: none;
+  transition: border-color 150ms ease-out;
+  will-change: width, height, transform, opacity;
+}
+
+.voice-pill-wrap.is-reviewing .voice-pill,
+.voice-pill-wrap.is-collapsing .voice-pill {
+  visibility: visible;
+  opacity: 1;
+  transform: none;
+}
+
+.voice-pill__compact {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 15px 6px 7px;
+}
+
+.voice-pill__compact:not(.has-status-badge) {
+  gap: 0;
+  padding: 6px 14px;
+}
+
+.voice-pill__compact:not(.has-status-badge) .voice-pill__stage {
+  width: 100%;
+}
+
+.voice-pill__stage {
+  height: 44px;
+  overflow: visible;
+}
+
+.voice-morph {
+  position: absolute;
+  top: 1px;
+  left: 50%;
+  display: block;
+  width: 168px;
+  height: 42px;
+  transform: translateX(-50%);
+}
+
+.voice-morph__primitive {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 3px;
+  height: 42px;
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+
+.voice-morph__ring {
+  position: absolute;
+  top: 9px;
+  left: 136px;
+  display: block;
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid rgba(239, 235, 226, 0.2);
+  border-top-color: var(--pill-accent);
+  border-right-color: rgba(239, 235, 226, 0.7);
+  border-radius: 50%;
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+
+.voice-pill__resolved-copy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+  color: rgba(247, 244, 237, 0.94);
+  font-size: 12px;
+  font-weight: 510;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-pill__resolved-copy.is-error {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.voice-pill__resolved-copy small {
+  flex: none;
+  color: #cba59e;
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.voice-pill__composer-content {
+  position: absolute;
+  inset: 0;
+}
+
+.voice-pill .scribe-composer {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: none;
+  animation: none;
+}
+
+/* Interactive browser harness. This is deliberately separate from the app's
+   settings chrome so every transition can be replayed and slowed down. */
+html[data-surface="motion-lab"],
+html[data-surface="motion-lab"] body,
+html[data-surface="motion-lab"] #root {
+  overflow: auto;
+  color-scheme: dark;
+  background: #0d0f0e;
+}
+
+html[data-surface="motion-lab"] body::before,
+html[data-surface="motion-lab"] body::after {
+  display: none;
+}
+
+.motion-lab {
+  min-width: 820px;
+  min-height: 100%;
+  padding: 42px 52px 48px;
+  color: #f1eee7;
+  background:
+    radial-gradient(650px 360px at 50% 47%, rgba(208, 185, 142, 0.055), transparent 70%),
+    #0d0f0e;
+}
+
+.motion-lab__header {
+  display: flex;
+  width: min(1120px, 100%);
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 40px;
+  margin: 0 auto;
+}
+
+.motion-lab__header > div > span {
+  color: #afc8c4;
+  font-size: 10px;
+  font-weight: 680;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.motion-lab__header h1 {
+  margin: 12px 0 7px;
+  font-size: clamp(28px, 3vw, 42px);
+  font-weight: 570;
+  letter-spacing: -0.035em;
+}
+
+.motion-lab__header p {
+  margin: 0;
+  color: rgba(239, 235, 226, 0.46);
+  font-size: 12px;
+}
+
+.motion-lab__header a {
+  margin-top: 4px;
+  padding: 9px 13px;
+  color: rgba(239, 235, 226, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  text-decoration: none;
+  font-size: 10px;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.motion-lab__header a:hover {
+  color: #f4f1e9;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.motion-lab__stage {
+  display: grid;
+  width: min(1120px, 100%);
+  min-height: 460px;
+  margin: 26px auto 20px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 24px;
+  background:
+    linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px),
+    #101211;
+  background-size: 28px 28px;
+}
+
+.motion-lab__stage .voice-pill-wrap {
+  pointer-events: auto;
+}
+
+.motion-lab__controls {
+  display: grid;
+  width: min(1120px, 100%);
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 18px;
+  margin: 0 auto;
+}
+
+.motion-lab__segmented,
+.motion-lab__transport {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.motion-lab button,
+.motion-lab select {
+  color: rgba(239, 235, 226, 0.58);
+  border: 0;
+  background: transparent;
+}
+
+.motion-lab__segmented button {
+  height: 29px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.motion-lab__segmented button.is-active {
+  color: #f1eee7;
+  background: rgba(255, 255, 255, 0.075);
+}
+
+.motion-lab__transport {
+  justify-self: end;
+}
+
+.motion-lab__transport > button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 7px;
+}
+
+.motion-lab__transport > button:hover {
+  color: #f1eee7;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.motion-lab__transport > button:last-child {
+  width: auto;
+  min-width: 62px;
+  padding: 0 9px;
+  font-size: 9px;
+  font-weight: 620;
+}
+
+.motion-lab__transport > button.is-live {
+  color: #d0b98e;
+  background: rgba(208, 185, 142, 0.08);
+}
+
+.motion-lab__transport label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 5px;
+  color: rgba(239, 235, 226, 0.38);
+  font-size: 9px;
+}
+
+.motion-lab__transport select {
+  height: 28px;
+  padding: 0 6px;
+  color-scheme: dark;
+  font-size: 10px;
+}
+
+.motion-lab__timeline {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: stretch;
+  gap: 5px;
+  padding-top: 8px;
+}
+
+.motion-lab__timeline button {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  height: 49px;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 11px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.022);
+  text-align: left;
+}
+
+.motion-lab__timeline button::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: transparent;
+}
+
+.motion-lab__timeline button.is-active {
+  color: #f2efe7;
+  border-color: rgba(175, 200, 196, 0.18);
+  background: rgba(175, 200, 196, 0.055);
+}
+
+.motion-lab__timeline button.is-active::after {
+  background: #afc8c4;
+}
+
+.motion-lab__timeline i {
+  color: rgba(239, 235, 226, 0.28);
+  font-size: 8px;
+  font-style: normal;
+}
+
+.motion-lab__timeline span {
+  overflow: hidden;
+  font-size: 9px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.motion-lab__input-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #cba59e;
+  font-size: 10px;
 }
 
 @media (prefers-reduced-motion: reduce) {

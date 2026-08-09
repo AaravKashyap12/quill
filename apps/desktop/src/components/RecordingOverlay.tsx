@@ -1,12 +1,13 @@
-import { AlertTriangle, Check, LockKeyhole, Mic, PenLine } from "lucide-react";
+import { AlertTriangle, Check } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { dismissVoiceOverlay } from "../tauri";
 import type { Mode, ScribeReviewDraft } from "../types";
 import { useAudioLevels } from "../hooks/useAudioLevels";
-import { Waveform, type WaveformVariant } from "./Waveform";
 import { ScribeReviewWindow } from "./ScribeReviewWindow";
+import { VoiceMorph } from "./VoiceMorph";
 
 export type VoicePillPhase =
   | "idle"
@@ -33,6 +34,8 @@ interface RecordingOverlayProps {
   mode: Mode;
   locked?: boolean;
   initialPhase?: VoicePillPhase;
+  controlledPhase?: VoicePillPhase;
+  demoLevels?: number[] | null;
   demoReview?: ScribeReviewDraft | null;
 }
 
@@ -63,14 +66,17 @@ function previewText(value?: string | null) {
 
 export function RecordingOverlay({
   mode,
-  locked = false,
   initialPhase = "recording",
+  controlledPhase,
+  demoLevels,
   demoReview = null,
 }: RecordingOverlayProps) {
   const [phase, setPhase] = useState<VoicePillPhase>(initialPhase);
   const [message, setMessage] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  const levels = useAudioLevels(mode);
+  const liveLevels = useAudioLevels(mode);
+  const levels = demoLevels ?? liveLevels;
+  const reducedMotion = useReducedMotion();
   const phaseRef = useRef(phase);
   const transitionTimer = useRef<number | null>(null);
   const dismissTimer = useRef<number | null>(null);
@@ -79,6 +85,10 @@ export function RecordingOverlay({
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
+
+  useEffect(() => {
+    if (controlledPhase) setPhase(controlledPhase);
+  }, [controlledPhase]);
 
   useEffect(() => {
     const clearTimers = () => {
@@ -167,18 +177,8 @@ export function RecordingOverlay({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const isDictation = mode === "dictation";
   const isProcessing = PROCESSING_PHASES.includes(phase);
-  const waveformVariant: WaveformVariant =
-    phase === "recording"
-      ? "recording"
-      : phase === "refining"
-        ? "refining"
-        : phase === "stopping"
-          ? "settling"
-          : "idle";
-  const Icon = isDictation ? Mic : PenLine;
-  const composerVisible = phase === "reviewing" || phase === "collapsing";
+  const composerVisible = phase === "reviewing";
 
   const showInserted = () => {
     setPreview("Inserted");
@@ -190,77 +190,132 @@ export function RecordingOverlay({
   };
 
   const closeComposer = () => {
-    setPhase("collapsing");
-    hideTimer.current = window.setTimeout(() => void dismissVoiceOverlay(), 240);
+    setPhase("dismissing");
+    hideTimer.current = window.setTimeout(() => void dismissVoiceOverlay(), 220);
   };
 
+  const expanded = composerVisible;
+  const completed = phase === "complete" || phase === "collapsing";
+  const showStatusBadge = completed || phase === "error";
+  const resolvedPreview = previewText(preview);
+  const successWidth = Math.min(300, Math.max(120, 84 + resolvedPreview.length * 6.2));
+  const compactWidth = phase === "error" ? 300 : completed ? successWidth : 198;
+  const surfaceTransition = reducedMotion
+    ? { duration: 0 }
+    : { duration: expanded ? 0.42 : 0.3, ease: [0.22, 1, 0.36, 1] as const };
+
   return (
-    <div className={`voice-pill-wrap is-${phase}${composerVisible ? " has-composer" : ""}`}>
-      <div
+    <motion.div
+      className={`voice-pill-wrap is-${phase}${composerVisible ? " has-composer" : ""}`}
+      animate={{ width: expanded ? 480 : 238, height: expanded ? 390 : 72 }}
+      transition={surfaceTransition}
+    >
+      <motion.section
+        layout
         className={`voice-pill mode-${mode} is-${phase}`}
+        initial={reducedMotion ? false : { opacity: 0, scale: 0.98 }}
+        animate={{
+          width: expanded ? 456 : compactWidth,
+          height: expanded ? 338 : 58,
+          borderRadius: expanded ? 20 : 999,
+          opacity: phase === "dismissing" ? 0 : 1,
+          y: phase === "dismissing" ? 4 : 0,
+          scale: phase === "dismissing" ? 0.98 : 1,
+        }}
+        transition={surfaceTransition}
         role={composerVisible ? undefined : "status"}
         aria-hidden={composerVisible || undefined}
         aria-live={composerVisible ? undefined : phase === "error" ? "assertive" : "polite"}
         aria-atomic="true"
         aria-busy={phase === "stopping" || isProcessing || phase === "generating"}
       >
-        <span className="voice-pill__badge" aria-hidden="true">
-          <span className="voice-pill__badge-icon">
-            {phase === "complete" ? (
-              <Check size={18} strokeWidth={2.1} />
-            ) : phase === "error" ? (
-              <AlertTriangle size={16} strokeWidth={2} />
-            ) : (
-              <Icon size={17} strokeWidth={1.9} />
-            )}
-          </span>
-          {locked && phase === "recording" ? (
-            <LockKeyhole className="voice-pill__lock" size={9} strokeWidth={2.2} />
-          ) : null}
-        </span>
+        <AnimatePresence initial={false} mode="popLayout">
+          {composerVisible && mode === "scribe" ? (
+            <motion.div
+              key="composer"
+              className="voice-pill__composer-content"
+              initial={reducedMotion ? false : { opacity: 0, y: 3 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 2 }}
+              transition={{ duration: reducedMotion ? 0 : 0.22, delay: reducedMotion ? 0 : 0.14 }}
+            >
+              <ScribeReviewWindow
+                embedded
+                initialReview={demoReview}
+                onInserted={showInserted}
+                onDiscarded={closeComposer}
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="compact"
+              className={`voice-pill__compact${showStatusBadge ? " has-status-badge" : ""}`}
+              initial={reducedMotion ? false : { opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: reducedMotion ? 0 : 0.16 }}
+            >
+              <AnimatePresence initial={false}>
+                {showStatusBadge ? (
+                  <motion.span
+                    className="voice-pill__badge"
+                    layout
+                    aria-hidden="true"
+                    initial={reducedMotion ? false : { opacity: 0, scale: 0.85 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.92 }}
+                  >
+                  <motion.span
+                    className="voice-pill__badge-icon"
+                    initial={reducedMotion ? false : { opacity: 0, scale: 0.85 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={
+                      completed && !reducedMotion
+                        ? { duration: 0.25, ease: [0.34, 1.25, 0.64, 1] }
+                        : { duration: reducedMotion ? 0 : 0.14 }
+                    }
+                  >
+                    {completed ? (
+                      <Check size={18} strokeWidth={2.1} />
+                    ) : (
+                      <AlertTriangle size={16} strokeWidth={2} />
+                    )}
+                  </motion.span>
+                  </motion.span>
+                ) : null}
+              </AnimatePresence>
 
-        <span className="voice-pill__stage" aria-hidden="true">
-          <span className="voice-pill__layer voice-pill__wave-layer">
-            <Waveform variant={waveformVariant} levels={levels} />
-          </span>
-
-          <span className="voice-pill__layer voice-pill__processing-layer">
-            <span className="voice-pill__dots">
-              {Array.from({ length: 12 }, (_, index) => (
-                <i key={index} style={{ animationDelay: `${index * 56}ms` }} />
-              ))}
-            </span>
-            <span className="voice-pill__ring" />
-          </span>
-
-          <span className="voice-pill__layer voice-pill__generation-layer">
-            <span className="voice-pill__text-lines">
-              <i />
-              <i />
-              <i />
-            </span>
-          </span>
-
-          <span className="voice-pill__layer voice-pill__complete-layer">
-            <span>{previewText(preview)}</span>
-          </span>
-
-          <span className="voice-pill__layer voice-pill__error-layer">
-            <span>{message || "Couldn't process audio"}</span>
-            <small>Try again</small>
-          </span>
-        </span>
-
-        <span className="sr-only">{phaseLabel(phase, mode, message)}</span>
-      </div>
-      {composerVisible && mode === "scribe" ? (
-        <ScribeReviewWindow
-          embedded
-          initialReview={demoReview}
-          onInserted={showInserted}
-          onDiscarded={closeComposer}
-        />
-      ) : null}
-    </div>
+              <span className="voice-pill__stage" aria-hidden="true">
+                <VoiceMorph phase={phase} mode={mode} levels={levels} />
+                <AnimatePresence initial={false}>
+                  {completed ? (
+                    <motion.span
+                      key="complete-copy"
+                      className="voice-pill__resolved-copy"
+                      initial={reducedMotion ? false : { opacity: 0, y: 3 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: reducedMotion ? 0 : 0.26, delay: reducedMotion ? 0 : 0.08 }}
+                    >
+                      {resolvedPreview}
+                    </motion.span>
+                  ) : phase === "error" ? (
+                    <motion.span
+                      key="error-copy"
+                      className="voice-pill__resolved-copy is-error"
+                      initial={reducedMotion ? false : { opacity: 0, y: 2 }}
+                      animate={{ opacity: 1, y: 0 }}
+                    >
+                      {message || "Couldn't process audio"}<small>Retry</small>
+                    </motion.span>
+                  ) : null}
+                </AnimatePresence>
+              </span>
+              <span className="sr-only">{phaseLabel(phase, mode, message)}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.section>
+    </motion.div>
   );
 }
