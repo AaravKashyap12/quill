@@ -130,6 +130,14 @@ pub fn prompt(transcript: &str, register: Register) -> String {
     )
 }
 
+fn revision_prompt(transcript: &str, register: Register, instruction: &str) -> String {
+    format!(
+        "{}\n\nRevision instruction:\n{}\nApply the instruction without inventing facts. Output only the revised text.",
+        prompt(transcript, register),
+        instruction.trim()
+    )
+}
+
 /// Conservative tokenizer-independent estimate used before contacting a local
 /// model. ASCII word runs are charged at one token per three characters,
 /// punctuation at one token each, and non-ASCII characters by their UTF-8
@@ -579,7 +587,21 @@ fn apply_output_guards(transcript: &str, provider_output: ProviderOutput) -> Cle
 }
 
 pub async fn clean(settings: &AppSettings, transcript: &str, register: Register) -> Result<String> {
-    let outcome = clean_with_outcome(settings, transcript, register).await?;
+    let outcome = clean_with_outcome(settings, transcript, register, None).await?;
+    finish_clean(transcript, outcome)
+}
+
+pub async fn clean_with_instruction(
+    settings: &AppSettings,
+    transcript: &str,
+    register: Register,
+    instruction: &str,
+) -> Result<String> {
+    let outcome = clean_with_outcome(settings, transcript, register, Some(instruction)).await?;
+    finish_clean(transcript, outcome)
+}
+
+fn finish_clean(transcript: &str, outcome: CleanOutcome) -> Result<String> {
     if let Some(reason) = outcome.guard_reason {
         let source_words = transcript.split_whitespace().count();
         let model_words = outcome.model_output.split_whitespace().count();
@@ -604,6 +626,7 @@ async fn clean_with_outcome(
     settings: &AppSettings,
     transcript: &str,
     register: Register,
+    instruction: Option<&str>,
 ) -> Result<CleanOutcome> {
     if transcript.trim().is_empty() {
         return Ok(CleanOutcome {
@@ -612,7 +635,10 @@ async fn clean_with_outcome(
             guard_reason: None,
         });
     }
-    let request_prompt = prompt(transcript, register);
+    let request_prompt = match instruction.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(instruction) => revision_prompt(transcript, register, instruction),
+        None => prompt(transcript, register),
+    };
     if conservative_token_estimate(&request_prompt) > MAX_PROMPT_TOKEN_ESTIMATE {
         return Ok(guarded_outcome(
             transcript,
@@ -891,7 +917,7 @@ mod tests {
     #[tokio::test]
     async fn oversized_input_falls_back_before_provider_discovery() {
         let transcript = "dictation ".repeat(MAX_PROMPT_TOKEN_ESTIMATE);
-        let outcome = clean_with_outcome(&AppSettings::default(), &transcript, Register::Notes)
+        let outcome = clean_with_outcome(&AppSettings::default(), &transcript, Register::Notes, None)
             .await
             .unwrap();
         assert_eq!(outcome.guard_reason, Some(GuardReason::InputTooLong));
@@ -906,6 +932,18 @@ mod tests {
             Register::Email,
         );
         assert!(conservative_token_estimate(&request) <= MAX_PROMPT_TOKEN_ESTIMATE);
+    }
+
+    #[test]
+    fn revision_prompts_keep_instruction_separate_from_dictation() {
+        let request = revision_prompt(
+            "Send the release note to Jordan",
+            Register::Email,
+            "Make it more concise",
+        );
+        assert!(request.contains("Dictation:\nSend the release note to Jordan"));
+        assert!(request.contains("Revision instruction:\nMake it more concise"));
+        assert!(request.contains("without inventing facts"));
     }
 
     #[test]
@@ -1033,7 +1071,7 @@ mod tests {
         let settings = AppSettings::default();
         for (index, utterance) in EVAL_UTTERANCES.iter().enumerate() {
             for register in EVAL_REGISTERS {
-                let outcome = clean_with_outcome(&settings, utterance, register)
+                let outcome = clean_with_outcome(&settings, utterance, register, None)
                     .await
                     .unwrap_or_else(|error| {
                         panic!("cleanup failed for case {index} in {register:?}: {error}")

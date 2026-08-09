@@ -1,121 +1,118 @@
 import { useEffect, useRef } from "react";
 
-/*
- * A voice-shaped equaliser. 22 vertical bars mirrored around the centre line,
- * with soft rounded caps so it reads like real speech rather than a synthetic
- * zigzag. Live: interpolated from the backend's per-frame audio levels. Idle:
- * a slow sine-wave breathing so the pill never looks dead.
- *
- * Transforms run through `scaleY` on the bars so animation stays on the GPU.
- */
+const BAR_COUNT = 18;
+const BAR_WIDTH = 2.2;
+const BAR_GAP = 2.15;
+const WIDTH = BAR_COUNT * BAR_WIDTH + (BAR_COUNT - 1) * BAR_GAP;
+const HEIGHT = 24;
+const MIN_SCALE = 0.1;
 
-const BAR_COUNT = 22;
-const BAR_WIDTH = 2.4;
-const BAR_GAP = 1.2;
-const W = BAR_COUNT * BAR_WIDTH + (BAR_COUNT - 1) * BAR_GAP;
-const H = 22;
-const MIN_SCALE = 0.14;
-const SMOOTHING = 0.32; // 0..1, higher = snappier
+export type WaveformVariant = "idle" | "recording" | "settling" | "refining";
 
-/** Distribute a small number of backend levels across all bars, weighted
- *  toward the centre so a voice pill visually peaks in the middle. */
 function projectLevels(levels: number[]): number[] {
-  const source = levels.map((level) => Math.min(1, Math.abs(level) * 3.2));
-  const out = new Array<number>(BAR_COUNT);
-  for (let i = 0; i < BAR_COUNT; i += 1) {
-    const t = (i + 0.5) / BAR_COUNT;
-    const position = t * (source.length - 1);
-    const lo = Math.floor(position);
-    const hi = Math.min(source.length - 1, lo + 1);
-    const frac = position - lo;
-    const sampled = source[lo] * (1 - frac) + source[hi] * frac;
-    // Bell-shaped envelope: 1 at centre, ~0.55 at the edges.
-    const envelope = 0.55 + 0.45 * Math.sin(Math.PI * t);
-    out[i] = Math.max(MIN_SCALE, Math.min(1, Math.pow(sampled, 0.72) * envelope));
-  }
-  return out;
+  if (levels.length === 0) return new Array(BAR_COUNT).fill(MIN_SCALE);
+
+  return Array.from({ length: BAR_COUNT }, (_, index) => {
+    const position = ((index + 0.5) / BAR_COUNT) * (levels.length - 1);
+    const lower = Math.floor(position);
+    const upper = Math.min(levels.length - 1, lower + 1);
+    const mix = position - lower;
+    const sample =
+      Math.abs(levels[lower] ?? 0) * (1 - mix) + Math.abs(levels[upper] ?? 0) * mix;
+    const centreEnvelope = 0.48 + 0.52 * Math.sin(((index + 0.5) / BAR_COUNT) * Math.PI);
+    return Math.max(
+      MIN_SCALE,
+      Math.min(1, Math.pow(Math.min(1, sample * 3.4), 0.7) * centreEnvelope),
+    );
+  });
 }
 
-/** Idle breathing when no live audio is streaming. */
-function idleLevels(time: number): number[] {
-  const out = new Array<number>(BAR_COUNT);
-  for (let i = 0; i < BAR_COUNT; i += 1) {
-    const t = (i + 0.5) / BAR_COUNT;
-    const envelope = 0.55 + 0.45 * Math.sin(Math.PI * t);
-    // Two travelling sines at different frequencies + phase offsets, so the
-    // pattern never repeats obviously.
-    const wave =
-      0.5 +
-      0.28 * Math.sin(time * 0.0034 + i * 0.62) +
-      0.16 * Math.sin(time * 0.0071 - i * 0.31);
-    out[i] = Math.max(MIN_SCALE, Math.min(1, wave * envelope));
-  }
-  return out;
+function refinementLevels(time: number): number[] {
+  const progress = Math.min(1, time / 720);
+  const envelope = Math.sin(progress * Math.PI);
+  return Array.from({ length: BAR_COUNT }, (_, index) => {
+    const centreEnvelope = 0.46 + 0.54 * Math.sin(((index + 0.5) / BAR_COUNT) * Math.PI);
+    const ripple = 0.72 + 0.28 * Math.sin(index * 0.9 + progress * Math.PI * 2);
+    return Math.max(MIN_SCALE, envelope * centreEnvelope * ripple);
+  });
 }
 
+/**
+ * A centre-origin voice meter. Audio frames only update a ref; a single RAF
+ * loop performs attack/decay smoothing and writes compositor-friendly SVG
+ * transforms. Non-recording variants settle and stop their RAF once complete.
+ */
 export function Waveform({
-  active,
+  variant,
   levels,
 }: {
-  active: boolean;
+  variant: WaveformVariant;
   levels?: number[] | null;
 }) {
   const barsRef = useRef<Array<SVGRectElement | null>>([]);
-  const stateRef = useRef<number[]>(new Array(BAR_COUNT).fill(MIN_SCALE));
-  const targetRef = useRef<number[]>(new Array(BAR_COUNT).fill(MIN_SCALE));
+  const levelsRef = useRef<number[] | null>(levels ?? null);
+  const currentRef = useRef<number[]>(new Array(BAR_COUNT).fill(MIN_SCALE));
 
-  // Whenever a fresh audio frame arrives, retarget the bars. The RAF loop
-  // below eases the current state toward the target for smoothness.
   useEffect(() => {
-    if (!active) {
-      targetRef.current = new Array(BAR_COUNT).fill(MIN_SCALE);
-      return;
-    }
-    if (levels && levels.length > 0) {
-      targetRef.current = projectLevels(levels);
-    }
-  }, [active, levels]);
+    levelsRef.current = levels ?? null;
+  }, [levels]);
 
   useEffect(() => {
     let frame = 0;
+    let startedAt: number | null = null;
+    let settledFrames = 0;
+
     const loop = (time: number) => {
-      const useIdle = active && (!levels || levels.length === 0);
-      const target = useIdle ? idleLevels(time) : targetRef.current;
-      const current = stateRef.current;
-      for (let i = 0; i < BAR_COUNT; i += 1) {
-        current[i] = current[i] + (target[i] - current[i]) * SMOOTHING;
-        const bar = barsRef.current[i];
-        if (bar) bar.setAttribute("transform", `scale(1 ${current[i].toFixed(3)})`);
+      startedAt ??= time;
+      const elapsed = time - startedAt;
+      const target =
+        variant === "recording" && levelsRef.current
+          ? projectLevels(levelsRef.current)
+          : variant === "refining"
+            ? refinementLevels(elapsed)
+            : new Array(BAR_COUNT).fill(MIN_SCALE);
+      const current = currentRef.current;
+      let largestDelta = 0;
+
+      for (let index = 0; index < BAR_COUNT; index += 1) {
+        const difference = target[index] - current[index];
+        const smoothing = difference > 0 ? 0.36 : 0.19;
+        current[index] += difference * smoothing;
+        largestDelta = Math.max(largestDelta, Math.abs(difference));
+        const bar = barsRef.current[index];
+        if (bar) bar.style.transform = `scaleY(${current[index].toFixed(3)})`;
       }
-      frame = requestAnimationFrame(loop);
+
+      const canSettle = variant !== "recording";
+      settledFrames = canSettle && largestDelta < 0.004 ? settledFrames + 1 : 0;
+      if (settledFrames < 8 && !(variant === "refining" && elapsed > 820)) {
+        frame = requestAnimationFrame(loop);
+      }
     };
+
     frame = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frame);
-  }, [active, levels]);
+  }, [variant]);
 
   return (
     <span className="waveform" aria-hidden="true">
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet">
-        {Array.from({ length: BAR_COUNT }, (_, i) => {
-          const x = i * (BAR_WIDTH + BAR_GAP);
+      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none">
+        {Array.from({ length: BAR_COUNT }, (_, index) => {
+          const x = index * (BAR_WIDTH + BAR_GAP);
           return (
-            <g
-              key={i}
-              transform={`translate(${x + BAR_WIDTH / 2} ${H / 2})`}
-            >
-              <rect
-                ref={(node) => {
-                  barsRef.current[i] = node;
-                }}
-                className="waveform__bar"
-                x={-BAR_WIDTH / 2}
-                y={-H / 2}
-                width={BAR_WIDTH}
-                height={H}
-                rx={BAR_WIDTH / 2}
-                transform={`scale(1 ${MIN_SCALE})`}
-              />
-            </g>
+            <rect
+              key={index}
+              ref={(node) => {
+                barsRef.current[index] = node;
+              }}
+              className="waveform__bar"
+              x={x}
+              y={0}
+              width={BAR_WIDTH}
+              height={HEIGHT}
+              rx={BAR_WIDTH / 2}
+              style={{ transform: `scaleY(${MIN_SCALE})` }}
+            />
           );
         })}
       </svg>

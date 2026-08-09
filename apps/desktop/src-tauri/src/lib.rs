@@ -246,6 +246,7 @@ fn preview_mode(app: AppHandle, mode: Mode, active: bool) -> Result<(), String> 
         if let Some(other) = app.get_webview_window(other_label) {
             let _ = other.hide();
         }
+        let _ = overlay.set_ignore_cursor_events(true);
         position_overlay_bottom_center(&overlay);
         overlay.show().map_err(|error| error.to_string())
     } else {
@@ -255,6 +256,16 @@ fn preview_mode(app: AppHandle, mode: Mode, active: bool) -> Result<(), String> 
             }
         }
         Ok(())
+    }
+}
+
+#[tauri::command]
+fn dismiss_voice_overlay(app: AppHandle) {
+    for label in ["overlay", "scribe-overlay"] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.set_ignore_cursor_events(true);
+            let _ = window.hide();
+        }
     }
 }
 
@@ -536,6 +547,7 @@ pub fn run() {
             system_profile::get_system_profile,
             downloads::get_cuda_runtime_status,
             preview_mode,
+            dismiss_voice_overlay,
             set_hotkey_capture,
             review::get_scribe_review,
             review::regenerate_scribe_review,

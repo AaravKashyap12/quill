@@ -78,6 +78,7 @@ export function App() {
   const reviewOnly = new URLSearchParams(window.location.search).has("review");
   const overlayMode =
     (new URLSearchParams(window.location.search).get("mode") as Mode | null) ?? "dictation";
+  const overlayDemo = new URLSearchParams(window.location.search).get("demo");
 
   /* Last persisted settings, so Discard can restore them without a reload. */
   const savedSettings = useRef<AppSettings>(defaultSettings);
@@ -346,9 +347,34 @@ export function App() {
   }
 
   if (overlayOnly) {
+    const demoPhase =
+      overlayDemo === "review"
+        ? "reviewing"
+        : overlayDemo === "processing"
+          ? "transcribing"
+          : overlayDemo === "generating"
+            ? "generating"
+            : overlayDemo === "complete"
+              ? "complete"
+              : "recording";
+    const demoReview =
+      overlayDemo === "review"
+        ? {
+            id: 1,
+            source: "Tell Jordan I can do 5 PM tomorrow and send my calendar link.",
+            draft:
+              "Hi Jordan,\n\n5 PM tomorrow works for me. You can use my calendar link to schedule it.\n\nTalk soon.",
+            warning: null,
+            register: "email" as const,
+          }
+        : null;
     return (
       <main className="overlay-page">
-        <RecordingOverlay mode={overlayMode} />
+        <RecordingOverlay
+          mode={overlayMode}
+          initialPhase={demoPhase}
+          demoReview={demoReview}
+        />
       </main>
     );
   }

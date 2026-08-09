@@ -7,6 +7,7 @@ const root = document.getElementById("root");
 if (!root) throw new Error("Quill root element is missing");
 
 const windowQuery = new URLSearchParams(window.location.search);
+if (windowQuery.has("demo")) document.documentElement.dataset.demo = "true";
 const surface = windowQuery.has("overlay")
   ? "overlay"
   : windowQuery.has("review")

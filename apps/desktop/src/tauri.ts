@@ -182,6 +182,12 @@ export async function previewMode(mode: Mode, active: boolean): Promise<void> {
   await invoke("preview_mode", { mode, active });
 }
 
+/** Hide the transient voice surface after its own exit animation finishes. */
+export async function dismissVoiceOverlay(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("dismiss_voice_overlay");
+}
+
 /** Pause the session's hotkey handling while the settings UI is capturing
     a new shortcut, so pressing the current combination is written into the
     field instead of firing the mode. */
@@ -195,9 +201,13 @@ export async function getScribeReview(): Promise<ScribeReviewDraft | null> {
   return invoke<ScribeReviewDraft | null>("get_scribe_review");
 }
 
-export async function regenerateScribeReview(register?: Register): Promise<ScribeReviewDraft> {
+export async function regenerateScribeReview(
+  register?: Register,
+  instruction?: string,
+): Promise<ScribeReviewDraft> {
   return invoke<ScribeReviewDraft>("regenerate_scribe_review", {
     register: register ?? null,
+    instruction: instruction?.trim() || null,
   });
 }
 

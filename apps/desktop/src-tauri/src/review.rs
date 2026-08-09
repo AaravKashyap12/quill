@@ -7,15 +7,8 @@ use anyhow::{anyhow, Result};
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use unicode_segmentation::UnicodeSegmentation;
-
-const REVIEW_WIDTH: f64 = 420.0;
-const REVIEW_HEIGHT: f64 = 326.0;
-const REVIEW_MIN_WIDTH: f64 = 380.0;
-const REVIEW_MIN_HEIGHT: f64 = 300.0;
-const SUGGESTION_HEIGHT: f64 = 86.0;
-const SUGGESTION_MIN_HEIGHT: f64 = 76.0;
 
 #[derive(Default)]
 pub struct ReviewStore {
@@ -66,32 +59,14 @@ impl ReviewSession {
     }
 }
 
-pub fn show_processing(app: &AppHandle, message: &str) -> Result<()> {
-    if let Ok(mut current) = app.state::<ReviewStore>().current.lock() {
-        current.take();
-    }
-    let window = app
-        .get_webview_window("scribe-review")
-        .ok_or_else(|| anyhow!("Scribe review window is unavailable"))?;
-    restore_review_window(&window);
-    position_review(&window);
-    window.show()?;
-    window.set_focus()?;
-    let _ = window.emit(
-        "scribe-review://processing",
-        serde_json::json!({ "message": message }),
-    );
-    Ok(())
-}
-
 pub fn hide_processing(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("scribe-review") {
-        let _ = window.hide();
+    if let Some(window) = app.get_webview_window("scribe-overlay") {
+        let _ = window.emit("scribe-review://discarded", ());
     }
 }
 
 pub fn update_processing(app: &AppHandle, message: &str) {
-    if let Some(window) = app.get_webview_window("scribe-review") {
+    if let Some(window) = app.get_webview_window("scribe-overlay") {
         let _ = window.emit(
             "scribe-review://processing",
             serde_json::json!({ "message": message }),
@@ -119,10 +94,10 @@ pub fn present(app: &AppHandle, request: ReviewRequest) -> Result<()> {
         .map_err(|_| anyhow!("Scribe review state was poisoned"))? = Some(session);
 
     let window = app
-        .get_webview_window("scribe-review")
-        .ok_or_else(|| anyhow!("Scribe review window is unavailable"))?;
-    restore_review_window(&window);
-    position_review(&window);
+        .get_webview_window("scribe-overlay")
+        .ok_or_else(|| anyhow!("Scribe overlay window is unavailable"))?;
+    let _ = window.set_ignore_cursor_events(false);
+    crate::position_overlay_bottom_center(&window);
     window.show()?;
     window.set_focus()?;
     let _ = window.emit("scribe-review://updated", payload);
@@ -143,6 +118,7 @@ pub async fn regenerate_scribe_review(
     app: AppHandle,
     state: State<'_, ReviewStore>,
     register: Option<Register>,
+    instruction: Option<String>,
 ) -> Result<ReviewPayload, String> {
     let (id, source, settings, selected_register) = {
         let current = state
@@ -160,7 +136,12 @@ pub async fn regenerate_scribe_review(
         )
     };
 
-    let regenerated = cleanup::clean(&settings, &source, selected_register).await;
+    let regenerated = match instruction.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        Some(instruction) => {
+            cleanup::clean_with_instruction(&settings, &source, selected_register, instruction).await
+        }
+        None => cleanup::clean(&settings, &source, selected_register).await,
+    };
     let payload = {
         let mut current = state
             .current
@@ -184,7 +165,7 @@ pub async fn regenerate_scribe_review(
         }
         session.payload()
     };
-    if let Some(window) = app.get_webview_window("scribe-review") {
+    if let Some(window) = app.get_webview_window("scribe-overlay") {
         let _ = window.emit("scribe-review://updated", payload.clone());
     }
     Ok(payload)
@@ -216,13 +197,6 @@ pub fn accept_scribe_review(
 
     match injection::inject_review_text(&session.target, &insertion, use_clipboard) {
         Ok(TargetInjection::Inserted) => {
-            if let Some(window) = app.get_webview_window("scribe-review") {
-                if suggestion.is_some() {
-                    show_suggestion_window(&window);
-                } else {
-                    let _ = window.hide();
-                }
-            }
             clear_review_recovery(&session.recovery_id);
             emit_runtime_status(&app, "ready", "Scribe draft inserted");
             Ok(suggestion)
@@ -317,8 +291,8 @@ pub fn discard_scribe_review(app: AppHandle, state: State<'_, ReviewStore>) -> R
         .lock()
         .map_err(|_| "Scribe review state was poisoned".to_owned())?
         .take();
-    if let Some(window) = app.get_webview_window("scribe-review") {
-        let _ = window.hide();
+    if let Some(window) = app.get_webview_window("scribe-overlay") {
+        let _ = window.emit("scribe-review://discarded", ());
     }
     if let Some(session) = session {
         clear_review_recovery(&session.recovery_id);
@@ -345,7 +319,7 @@ fn restore_session(state: &State<'_, ReviewStore>, session: ReviewSession) {
 }
 
 fn refocus_review(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("scribe-review") {
+    if let Some(window) = app.get_webview_window("scribe-overlay") {
         let _ = window.show();
         let _ = window.set_focus();
     }
@@ -361,35 +335,6 @@ fn emit_runtime_status(app: &AppHandle, state: &str, message: &str) {
             "provider": null,
         }),
     );
-}
-
-fn restore_review_window(window: &tauri::WebviewWindow) {
-    let _ = window.set_min_size(Some(LogicalSize::new(REVIEW_MIN_WIDTH, REVIEW_MIN_HEIGHT)));
-    let _ = window.set_size(LogicalSize::new(REVIEW_WIDTH, REVIEW_HEIGHT));
-}
-
-fn show_suggestion_window(window: &tauri::WebviewWindow) {
-    let _ = window.set_min_size(Some(LogicalSize::new(
-        REVIEW_MIN_WIDTH,
-        SUGGESTION_MIN_HEIGHT,
-    )));
-    let _ = window.set_size(LogicalSize::new(REVIEW_WIDTH, SUGGESTION_HEIGHT));
-    position_review(window);
-}
-
-fn position_review(window: &tauri::WebviewWindow) {
-    let Ok(Some(monitor)) = window.primary_monitor() else {
-        return;
-    };
-    let Ok(size) = window.outer_size() else {
-        return;
-    };
-    let screen = monitor.size();
-    let scale = monitor.scale_factor();
-    let bottom_margin = (86.0 * scale).round() as i32;
-    let x = ((screen.width as i32 - size.width as i32) / 2).max(0);
-    let y = (screen.height as i32 - size.height as i32 - bottom_margin).max(0);
-    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
 #[cfg(test)]

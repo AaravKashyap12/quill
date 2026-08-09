@@ -1,82 +1,104 @@
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isTauri } from "@tauri-apps/api/core";
 import {
   Check,
-  ChevronDown,
-  LoaderCircle,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
   PenLine,
   RefreshCw,
-  ShieldCheck,
-  Trash2,
+  Send,
+  X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { capDismissedSuggestions, createDictionaryEntryId } from "../dictionary";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   acceptScribeReview,
   discardScribeReview,
   getScribeReview,
-  loadSettings,
-  persistSettings,
   regenerateScribeReview,
 } from "../tauri";
-import type { DictionarySuggestion, Register, ScribeReviewDraft } from "../types";
+import type { Register, ScribeReviewDraft } from "../types";
 
 const registerOptions: Array<{ value: Register; label: string }> = [
   { value: "email", label: "Email" },
   { value: "chat", label: "Chat" },
-  { value: "prompt", label: "AI prompt" },
+  { value: "prompt", label: "Prompt" },
   { value: "notes", label: "Notes" },
   { value: "generic", label: "General" },
 ];
 
-export function ScribeReviewWindow() {
-  const [review, setReview] = useState<ScribeReviewDraft | null>(null);
-  const [suggestion, setSuggestion] = useState<DictionarySuggestion | null>(null);
-  const [draft, setDraft] = useState("");
-  const [processingMessage, setProcessingMessage] = useState("Transcribing on your device");
-  const [working, setWorking] = useState<
-    "regenerate" | "done" | "discard" | "add-suggestion" | "dismiss-suggestion" | null
-  >(null);
+interface ScribeReviewWindowProps {
+  embedded?: boolean;
+  initialReview?: ScribeReviewDraft | null;
+  onInserted?: () => void;
+  onDiscarded?: () => void;
+}
+
+export function ScribeReviewWindow({
+  embedded = false,
+  initialReview = null,
+  onInserted,
+  onDiscarded,
+}: ScribeReviewWindowProps) {
+  const [review, setReview] = useState<ScribeReviewDraft | null>(initialReview);
+  const [draft, setDraft] = useState(initialReview?.draft ?? "");
+  const [instruction, setInstruction] = useState("");
+  const [versions, setVersions] = useState<string[]>(
+    initialReview ? [initialReview.draft] : [],
+  );
+  const [versionIndex, setVersionIndex] = useState(initialReview ? 0 : -1);
+  const [working, setWorking] = useState<"regenerate" | "insert" | "discard" | null>(null);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const reviewId = useRef(initialReview?.id ?? null);
 
   function applyReview(next: ScribeReviewDraft, focusDraft = true) {
-    setSuggestion(null);
+    const isNewSession = reviewId.current !== next.id;
+    reviewId.current = next.id;
     setReview(next);
     setDraft(next.draft);
     setError(null);
-    if (!focusDraft) return;
-    window.setTimeout(() => {
-      textarea.current?.focus();
-      textarea.current?.setSelectionRange(next.draft.length, next.draft.length);
-    }, 40);
+    setVersions((current) => {
+      const base = isNewSession ? [] : current;
+      if (base[base.length - 1] === next.draft) {
+        setVersionIndex(base.length - 1);
+        return base;
+      }
+      const updated = [...base, next.draft];
+      setVersionIndex(updated.length - 1);
+      return updated;
+    });
+    if (focusDraft) window.setTimeout(() => textarea.current?.focus(), 80);
   }
 
   useEffect(() => {
-    void getScribeReview().then((current) => {
-      if (current) applyReview(current);
-    });
+    if (!isTauri()) return;
+    if (!initialReview) {
+      void getScribeReview().then((current) => {
+        if (current) applyReview(current, true);
+      });
+    }
     const unlisten = listen<ScribeReviewDraft>("scribe-review://updated", (event) => {
-      applyReview(event.payload);
+      applyReview(event.payload, working !== "regenerate");
     });
-    const unlistenProcessing = listen<{ message: string }>(
-      "scribe-review://processing",
-      (event) => {
-        setReview(null);
-        setSuggestion(null);
-        setDraft("");
-        setError(null);
-        setProcessingMessage(event.payload.message);
-      },
-    );
     return () => {
       void unlisten.then((dispose) => dispose());
-      void unlistenProcessing.then((dispose) => dispose());
     };
   }, []);
 
-  async function regenerate(registerOverride?: Register) {
-    const previousRegister = review?.register;
+  function selectVersion(nextIndex: number) {
+    const next = versions[nextIndex];
+    if (next === undefined) return;
+    setVersionIndex(nextIndex);
+    setDraft(next);
+    setError(null);
+    textarea.current?.focus();
+  }
+
+  async function regenerate(registerOverride?: Register, followUp = instruction) {
+    if (!review || working) return;
+    const previousRegister = review.register;
     if (registerOverride) {
       setReview((current) =>
         current ? { ...current, register: registerOverride } : current,
@@ -84,13 +106,23 @@ export function ScribeReviewWindow() {
     }
     setWorking("regenerate");
     setError(null);
+    setCopied(false);
     try {
-      applyReview(
-        await regenerateScribeReview(registerOverride),
-        registerOverride === undefined,
-      );
+      const next = isTauri()
+        ? await regenerateScribeReview(registerOverride, followUp)
+        : {
+            ...review,
+            register: registerOverride ?? review.register,
+            draft: followUp.trim()
+              ? `${draft.trim()}\n\n${followUp.trim().replace(/^./, (letter) => letter.toUpperCase())}.`
+              : versions.length % 2 === 0
+                ? "Hi Jordan,\n\n5 PM tomorrow works for me. You can use my calendar link to schedule it.\n\nTalk soon."
+                : "Hi Jordan,\n\nI’m available at 5 PM tomorrow. Please use my calendar link to book the time.\n\nBest,",
+          };
+      applyReview(next, false);
+      setInstruction("");
     } catch (reason) {
-      if (registerOverride && previousRegister) {
+      if (registerOverride) {
         setReview((current) =>
           current ? { ...current, register: previousRegister } : current,
         );
@@ -101,252 +133,188 @@ export function ScribeReviewWindow() {
     }
   }
 
-  async function done() {
-    setWorking("done");
+  async function insert() {
+    if (!draft.trim() || working) return;
+    setWorking("insert");
     setError(null);
     try {
-      const nextSuggestion = await acceptScribeReview(draft);
-      if (nextSuggestion) {
-        setSuggestion(nextSuggestion);
-        setReview(null);
-        setDraft("");
-      }
+      if (isTauri()) await acceptScribeReview(draft);
+      onInserted?.();
     } catch (reason) {
       setError(String(reason));
-    } finally {
-      setWorking(null);
-    }
-  }
-
-  async function resolveSuggestion(action: "add" | "dismiss") {
-    if (!suggestion) return;
-    setWorking(action === "add" ? "add-suggestion" : "dismiss-suggestion");
-    setError(null);
-    try {
-      const settings = await loadSettings();
-      if (action === "add") {
-        const knownWords = settings.dictionary.flatMap((entry) => [
-          entry.spoken.trim().toLowerCase(),
-          entry.replacement.trim().toLowerCase(),
-        ]);
-        const spokenKey = suggestion.spoken.trim().toLowerCase();
-        const replacementKey = suggestion.replacement.trim().toLowerCase();
-        if (!knownWords.includes(spokenKey) && !knownWords.includes(replacementKey)) {
-          await persistSettings({
-            ...settings,
-            dictionary: [
-              ...settings.dictionary,
-              {
-                id: createDictionaryEntryId(),
-                spoken: suggestion.spoken,
-                replacement: suggestion.replacement,
-                kind: "word",
-              },
-            ],
-          });
-        }
-      } else {
-        const alreadyDismissed = settings.dismissedSuggestions.some(
-          (dismissed) =>
-            dismissed.spoken.toLowerCase() === suggestion.spoken.toLowerCase() &&
-            dismissed.replacement.toLowerCase() === suggestion.replacement.toLowerCase(),
-        );
-        if (!alreadyDismissed) {
-          await persistSettings({
-            ...settings,
-            dismissedSuggestions: capDismissedSuggestions([
-              ...settings.dismissedSuggestions,
-              suggestion,
-            ]),
-          });
-        }
-      }
-      await getCurrentWindow().hide();
-      setSuggestion(null);
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
       setWorking(null);
     }
   }
 
   async function discard() {
+    if (working) return;
     setWorking("discard");
     setError(null);
     try {
-      await discardScribeReview();
+      if (isTauri()) await discardScribeReview();
+      onDiscarded?.();
     } catch (reason) {
       setError(String(reason));
-    } finally {
       setWorking(null);
     }
   }
 
-  if (suggestion) {
-    return (
-      <main className="review-page review-page--suggestion">
-        <section className="review-suggestion" aria-busy={working !== null}>
-          <p role="status" aria-live="polite">
-            <span>Teach Quill:</span>
-            <strong>{suggestion.spoken}</strong>
-            <span aria-hidden="true">→</span>
-            <strong>{suggestion.replacement}</strong>
-          </p>
-          <span className="review-suggestion__actions">
-            <button
-              type="button"
-              className="review-button review-button--primary review-button--compact"
-              onClick={() => void resolveSuggestion("add")}
-              disabled={working !== null}
-            >
-              {working === "add-suggestion" ? "Adding" : "Add"}
-            </button>
-            <button
-              type="button"
-              className="review-button review-button--quiet review-button--compact"
-              onClick={() => void resolveSuggestion("dismiss")}
-              disabled={working !== null}
-            >
-              {working === "dismiss-suggestion" ? "Dismissing" : "Dismiss"}
-            </button>
-          </span>
-          {error ? (
-            <small className="review-suggestion__error" role="alert">
-              {error}
-            </small>
-          ) : null}
-        </section>
-      </main>
-    );
+  async function copyDraft() {
+    try {
+      await navigator.clipboard.writeText(draft);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1300);
+    } catch (reason) {
+      setError(`Couldn't copy the draft: ${String(reason)}`);
+    }
   }
 
-  if (!review) {
-    return (
-      <main className="review-page">
-        <section className="review-card review-card--loading" aria-live="polite">
-          <span className="review-loading-mark" aria-hidden="true">
-            <PenLine size={17} strokeWidth={1.8} />
-          </span>
-          <span className="review-loading-copy">
-            <b>Preparing your draft</b>
-            <span>{processingMessage}</span>
-          </span>
-          <LoaderCircle className="review-loading-spinner" size={17} aria-hidden="true" />
-          <small>
-            <ShieldCheck size={12} aria-hidden="true" />
-            Stays on this device
-          </small>
-        </section>
-      </main>
-    );
+  function submitFollowUp(event: FormEvent) {
+    event.preventDefault();
+    if (instruction.trim()) void regenerate(undefined, instruction);
   }
 
-  return (
-    <main
-      className="review-page"
+  const content = !review ? (
+    <section className="scribe-composer is-loading" role="status" aria-live="polite">
+      <span className="scribe-composer__loading-mark" aria-hidden="true">
+        <PenLine size={17} strokeWidth={1.8} />
+      </span>
+      <span>Preparing your draft</span>
+      <i aria-hidden="true" />
+    </section>
+  ) : (
+    <section
+      className={`scribe-composer${working === "regenerate" ? " is-regenerating" : ""}`}
+      aria-busy={working !== null}
       onKeyDown={(event) => {
         if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
           event.preventDefault();
-          void done();
+          void insert();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          void discard();
         }
       }}
     >
-      <section className="review-card" aria-busy={working !== null}>
-        <header className="review-header" data-tauri-drag-region>
-          <span className="review-mark" aria-hidden="true">
-            <PenLine size={15} strokeWidth={1.9} />
-          </span>
-          <span className="review-heading" data-tauri-drag-region>
-            <b>Scribe draft</b>
-            <small>Review before Quill types</small>
-          </span>
-          <label className="review-register">
-            <span>Writing style</span>
-            <select
-              value={review.register}
-              onChange={(event) =>
-                void regenerate(event.target.value as Register)
-              }
-              disabled={working !== null}
-              aria-describedby="review-register-help"
-            >
-              {registerOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span id="review-register-help" className="sr-only">
-            Changing the writing style regenerates the draft from what Quill heard.
-          </span>
-          <span className="sr-only" role="status" aria-live="polite">
-            {working === "regenerate" ? "Regenerating draft" : ""}
-          </span>
-          <span className="review-local">
-            <ShieldCheck size={13} aria-hidden="true" />
-            Local
-          </span>
-        </header>
-
-        <div className="review-editor">
-          <label htmlFor="scribe-draft">Your final text</label>
-          <textarea
-            ref={textarea}
-            id="scribe-draft"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            spellCheck
-            aria-describedby={review.warning || error ? "review-message" : undefined}
-          />
-        </div>
-
-        {review.warning || error ? (
-          <p id="review-message" className={`review-message ${error ? "is-error" : ""}`}>
-            {error ?? review.warning}
-          </p>
-        ) : null}
-
-        <details className="review-source">
-          <summary>
-            What Quill heard
-            <ChevronDown size={14} aria-hidden="true" />
-          </summary>
-          <p>{review.source}</p>
-        </details>
-
-        <footer className="review-actions">
+      <header className="scribe-composer__header" data-tauri-drag-region>
+        <span className="scribe-composer__versions" aria-label="Draft versions">
           <button
             type="button"
-            className="review-button review-button--quiet"
-            onClick={() => void discard()}
-            disabled={working !== null}
+            onClick={() => selectVersion(versionIndex - 1)}
+            disabled={versionIndex <= 0 || working !== null}
+            aria-label="Previous draft version"
           >
-            <Trash2 size={14} />
-            Discard
+            <ChevronLeft size={13} />
           </button>
-          <span className="review-action-group">
-            <button
-              type="button"
-              className="review-button"
-              onClick={() => void regenerate()}
-              disabled={working !== null}
-            >
-              <RefreshCw size={14} className={working === "regenerate" ? "is-spinning" : ""} />
-              {working === "regenerate" ? "Regenerating" : "Regenerate"}
-            </button>
-            <button
-              type="button"
-              className="review-button review-button--primary"
-              onClick={() => void done()}
-              disabled={working !== null || !draft.trim()}
-            >
-              <Check size={15} strokeWidth={2.2} />
-              {working === "done" ? "Inserting" : "Done"}
-            </button>
+          <b>{Math.max(1, versionIndex + 1)} / {Math.max(1, versions.length)}</b>
+          <button
+            type="button"
+            onClick={() => selectVersion(versionIndex + 1)}
+            disabled={versionIndex >= versions.length - 1 || working !== null}
+            aria-label="Next draft version"
+          >
+            <ChevronRight size={13} />
+          </button>
+        </span>
+
+        <label className="scribe-composer__register">
+          <span className="sr-only">Writing style</span>
+          <select
+            value={review.register}
+            onChange={(event) => void regenerate(event.target.value as Register, "")}
+            disabled={working !== null}
+            aria-label="Writing style"
+          >
+            {registerOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+
+        <button
+          type="button"
+          className="scribe-composer__close"
+          onClick={() => void discard()}
+          disabled={working !== null}
+          aria-label="Close Scribe review"
+        >
+          <X size={15} />
+        </button>
+      </header>
+
+      <div className="scribe-composer__editor">
+        <label htmlFor="scribe-draft">Generated draft</label>
+        <textarea
+          ref={textarea}
+          id="scribe-draft"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          spellCheck
+          disabled={working === "regenerate"}
+          aria-describedby={review.warning || error ? "scribe-composer-message" : undefined}
+        />
+        <div className="scribe-composer__regenerating" aria-hidden="true">
+          <span className="voice-pill__dots">
+            {Array.from({ length: 11 }, (_, index) => (
+              <i key={index} style={{ animationDelay: `${index * 58}ms` }} />
+            ))}
           </span>
-        </footer>
-      </section>
-    </main>
+          <span className="voice-pill__ring" />
+        </div>
+      </div>
+
+      {review.warning || error ? (
+        <p id="scribe-composer-message" className={error ? "is-error" : ""} role={error ? "alert" : undefined}>
+          {error ?? review.warning}
+        </p>
+      ) : null}
+
+      <form className="scribe-composer__follow-up" onSubmit={submitFollowUp}>
+        <PenLine size={13} aria-hidden="true" />
+        <input
+          value={instruction}
+          onChange={(event) => setInstruction(event.target.value)}
+          placeholder="Refine or add details"
+          disabled={working !== null}
+          aria-label="Follow-up refinement instruction"
+        />
+        <button
+          type="submit"
+          disabled={!instruction.trim() || working !== null}
+          aria-label="Apply refinement instruction"
+        >
+          <Send size={13} />
+        </button>
+      </form>
+
+      <footer className="scribe-composer__actions">
+        <span className="scribe-composer__quick-actions">
+          <button type="button" onClick={() => void copyDraft()} disabled={working !== null}>
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+            <span>{copied ? "Copied" : "Copy"}</span>
+          </button>
+          <button type="button" onClick={() => void regenerate(undefined, "")} disabled={working !== null}>
+            <RefreshCw size={14} />
+            <span>{working === "regenerate" ? "Regenerating" : "Regenerate"}</span>
+          </button>
+        </span>
+        <button
+          type="button"
+          className="scribe-composer__insert"
+          onClick={() => void insert()}
+          disabled={working !== null || !draft.trim()}
+        >
+          <span>{working === "insert" ? "Inserting" : "Insert"}</span>
+          <Check size={14} />
+        </button>
+      </footer>
+
+      <span className="sr-only" role="status" aria-live="polite">
+        {working === "regenerate" ? "Regenerating draft" : copied ? "Draft copied" : ""}
+      </span>
+    </section>
   );
+
+  if (embedded) return content;
+  return <main className="review-page">{content}</main>;
 }

@@ -136,6 +136,22 @@ html[data-surface="review"] body::after {
   display: none;
 }
 
+html[data-demo="true"],
+html[data-demo="true"] body,
+html[data-demo="true"] #root {
+  background: #d9d6cf;
+}
+
+html[data-demo="true"] body {
+  background:
+    radial-gradient(circle at 50% 115%, rgba(255, 255, 255, 0.68), transparent 48%),
+    #d9d6cf;
+}
+
+html[data-demo="true"] .overlay-page {
+  align-items: center;
+}
+
 button,
 input,
 select {
@@ -3973,6 +3989,633 @@ button:disabled {
   .pill__label {
     display: none;
   }
+}
+
+/* ── VOICE PILL ───────────────────────────────────────────────────────────
+   One persistent, hardware-like object. State layers share the same stage so
+   speech can settle into dots, lines, and finally output without swapping the
+   surrounding surface. */
+.voice-pill-wrap {
+  display: grid;
+  width: 316px;
+  height: 72px;
+  place-items: center;
+  pointer-events: none;
+}
+
+.voice-pill {
+  --pill-accent: #afc8c4;
+  --pill-accent-soft: rgba(112, 150, 144, 0.18);
+  position: relative;
+  display: flex;
+  width: 252px;
+  height: 58px;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 15px 6px 7px;
+  overflow: hidden;
+  color: #f1eee7;
+  border: 1px solid rgba(255, 255, 255, 0.105);
+  border-radius: 999px;
+  background: rgba(29, 30, 29, 0.985);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.065),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.42),
+    0 5px 12px -8px rgba(0, 0, 0, 0.72),
+    0 14px 26px -22px rgba(0, 0, 0, 0.86);
+  transition:
+    width 300ms var(--ease-out),
+    opacity 200ms var(--ease-out),
+    transform 200ms var(--ease-out),
+    border-color 150ms ease-out;
+  animation: voice-pill-enter 180ms var(--ease-out) both;
+  user-select: none;
+}
+
+.voice-pill.mode-scribe {
+  --pill-accent: #d0b98e;
+  --pill-accent-soft: rgba(166, 128, 66, 0.18);
+}
+
+.voice-pill.is-complete,
+.voice-pill.is-error {
+  width: 300px;
+}
+
+.voice-pill.is-dismissing {
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
+}
+
+@keyframes voice-pill-enter {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.voice-pill__badge {
+  position: relative;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  place-items: center;
+  color: var(--pill-accent);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 50%;
+  background: var(--pill-accent-soft);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.075);
+}
+
+.voice-pill__badge::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  opacity: 0;
+  border: 1px solid rgba(175, 200, 196, 0.3);
+  border-radius: inherit;
+}
+
+.voice-pill.is-recording .voice-pill__badge::after {
+  animation: voice-badge-breathe 2s ease-in-out infinite;
+}
+
+.voice-pill.mode-scribe .voice-pill__badge::after {
+  border-color: rgba(208, 185, 142, 0.3);
+}
+
+@keyframes voice-badge-breathe {
+  0%, 100% { opacity: 0.28; transform: scale(0.98); }
+  50% { opacity: 0.62; transform: scale(1.015); }
+}
+
+.voice-pill__badge-icon {
+  display: grid;
+  place-items: center;
+}
+
+.voice-pill.is-complete .voice-pill__badge-icon {
+  animation: voice-check-in 250ms cubic-bezier(0.34, 1.25, 0.64, 1) both;
+}
+
+@keyframes voice-check-in {
+  0% { opacity: 0; transform: scale(0.85); }
+  72% { opacity: 1; transform: scale(1.03); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.voice-pill.is-error .voice-pill__badge {
+  --pill-accent: #cba59e;
+  --pill-accent-soft: rgba(150, 75, 65, 0.17);
+}
+
+.voice-pill__lock {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  padding: 1px;
+  color: #222321;
+  border-radius: 50%;
+  background: #e9e5dc;
+}
+
+.voice-pill__stage {
+  position: relative;
+  display: block;
+  width: 174px;
+  height: 32px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.voice-pill__layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  transform: translateY(2px) scale(0.985);
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 240ms var(--ease-out);
+}
+
+.voice-pill.is-idle .voice-pill__wave-layer,
+.voice-pill.is-recording .voice-pill__wave-layer,
+.voice-pill.is-stopping .voice-pill__wave-layer,
+.voice-pill.is-refining .voice-pill__wave-layer {
+  opacity: 1;
+  transform: none;
+}
+
+.voice-pill.is-transcribing .voice-pill__processing-layer,
+.voice-pill.is-processing .voice-pill__processing-layer {
+  opacity: 1;
+  transform: none;
+}
+
+.voice-pill.is-generating .voice-pill__generation-layer {
+  opacity: 1;
+  transform: none;
+}
+
+.voice-pill.is-complete .voice-pill__complete-layer,
+.voice-pill.is-error .voice-pill__error-layer {
+  opacity: 1;
+  transform: none;
+}
+
+.waveform {
+  display: block;
+  width: 100%;
+  height: 24px;
+}
+
+.waveform svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.waveform__bar {
+  fill: var(--pill-accent);
+  opacity: 0.94;
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.voice-pill.is-idle .waveform__bar {
+  opacity: 0.34;
+}
+
+.voice-pill__processing-layer {
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.voice-pill__dots {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.voice-pill__dots i {
+  width: 2.5px;
+  height: 2.5px;
+  opacity: 0.28;
+  border-radius: 50%;
+  background: #eeebe4;
+  animation: voice-dot-travel 1120ms ease-in-out infinite;
+}
+
+@keyframes voice-dot-travel {
+  0%, 62%, 100% { opacity: 0.24; transform: scale(0.82); }
+  26% { opacity: 0.92; transform: scale(1); }
+}
+
+.voice-pill__ring {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border: 1.5px solid rgba(238, 235, 228, 0.2);
+  border-top-color: var(--pill-accent);
+  border-right-color: rgba(238, 235, 228, 0.68);
+  border-radius: 50%;
+  animation: voice-ring-turn 1050ms linear infinite;
+}
+
+@keyframes voice-ring-turn { to { transform: rotate(360deg); } }
+
+.voice-pill__generation-layer {
+  padding: 2px 4px 2px 1px;
+}
+
+.voice-pill__text-lines {
+  display: grid;
+  width: 100%;
+  gap: 5px;
+}
+
+.voice-pill__text-lines i {
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(239, 234, 223, 0.7);
+  transform-origin: left center;
+  animation: voice-line-form 430ms var(--ease-out) both;
+}
+
+.voice-pill__text-lines i:nth-child(1) { width: 88%; }
+.voice-pill__text-lines i:nth-child(2) { width: 66%; animation-delay: 55ms; }
+.voice-pill__text-lines i:nth-child(3) { width: 78%; animation-delay: 105ms; }
+
+@keyframes voice-line-form {
+  from { opacity: 0.3; transform: scaleX(0.06); }
+  to { opacity: 1; transform: scaleX(1); }
+}
+
+.voice-pill__complete-layer span,
+.voice-pill__error-layer span {
+  overflow: hidden;
+  color: rgba(247, 244, 237, 0.94);
+  font-size: 12px;
+  font-weight: 510;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-pill__complete-layer span {
+  animation: voice-copy-in 260ms var(--ease-out) both;
+}
+
+@keyframes voice-copy-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
+.voice-pill__error-layer {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.voice-pill__error-layer small {
+  flex: none;
+  color: #cba59e;
+  font-size: 10px;
+  font-weight: 620;
+}
+
+/* Scribe uses the same transparent native canvas for the pill and review.
+   The canvas remains click-through until the backend makes the composer
+   interactive, avoiding a second window or a spatial jump. */
+.overlay-page {
+  align-items: end;
+  justify-items: center;
+}
+
+.voice-pill-wrap.has-composer {
+  position: relative;
+  width: 480px;
+  height: 390px;
+  padding: 8px 12px;
+  place-items: end center;
+}
+
+.voice-pill-wrap.is-reviewing .voice-pill,
+.voice-pill-wrap.is-collapsing .voice-pill {
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(2px) scale(0.985);
+  animation: none;
+}
+
+.scribe-composer {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  left: 12px;
+  display: flex;
+  height: 338px;
+  flex-direction: column;
+  overflow: hidden;
+  color: rgba(247, 244, 237, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.105);
+  border-radius: 20px;
+  background: rgba(27, 28, 27, 0.992);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.065),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.38),
+    0 16px 34px -24px rgba(0, 0, 0, 0.9);
+  transform-origin: bottom center;
+  animation: scribe-composer-expand 420ms var(--ease-out) both;
+  pointer-events: auto;
+}
+
+@keyframes scribe-composer-expand {
+  0% { opacity: 0; transform: translateY(2px) scale(0.7, 0.18); }
+  52% { opacity: 0.78; }
+  100% { opacity: 1; transform: none; }
+}
+
+.voice-pill-wrap.is-collapsing .scribe-composer {
+  opacity: 0;
+  transform: translateY(4px) scale(0.7, 0.18);
+  transition:
+    opacity 180ms ease-in,
+    transform 240ms cubic-bezier(0.55, 0, 1, 0.45);
+}
+
+.scribe-composer button,
+.scribe-composer select,
+.scribe-composer input,
+.scribe-composer textarea {
+  font-family: var(--font-ui);
+}
+
+.scribe-composer button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: rgba(239, 235, 226, 0.72);
+  border: 0;
+  background: transparent;
+}
+
+.scribe-composer button:not(:disabled):hover {
+  color: rgba(251, 248, 241, 0.98);
+}
+
+.scribe-composer button:disabled {
+  opacity: 0.32;
+}
+
+.scribe-composer button:focus-visible,
+.scribe-composer select:focus-visible,
+.scribe-composer input:focus-visible,
+.scribe-composer textarea:focus-visible {
+  outline: 1.5px solid rgba(208, 185, 142, 0.72);
+  outline-offset: 2px;
+}
+
+.scribe-composer__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 4px 12px;
+  flex: 0 0 42px;
+}
+
+.scribe-composer__versions {
+  display: inline-flex;
+  height: 27px;
+  align-items: center;
+  gap: 2px;
+  padding: 0 3px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.scribe-composer__versions button {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+
+.scribe-composer__versions b {
+  min-width: 28px;
+  color: rgba(247, 244, 237, 0.92);
+  font-size: 10px;
+  font-weight: 620;
+  text-align: center;
+}
+
+.scribe-composer__register {
+  margin-left: auto;
+}
+
+.scribe-composer__register select {
+  height: 27px;
+  padding: 0 23px 0 9px;
+  color: rgba(239, 235, 226, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 9.5px;
+  color-scheme: dark;
+}
+
+.scribe-composer__register option {
+  color: #f3f0e9;
+  background: #292b2a;
+}
+
+.scribe-composer__close {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.045) !important;
+}
+
+.scribe-composer__editor {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 6px;
+  padding: 7px 16px 5px;
+  flex: 1 1 auto;
+}
+
+.scribe-composer__editor > label {
+  color: rgba(239, 235, 226, 0.38);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.scribe-composer__editor textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  resize: none;
+  padding: 4px 1px;
+  color: rgba(250, 247, 240, 0.94);
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 1.52;
+  outline: none;
+  transition: opacity 170ms var(--ease-out);
+}
+
+.scribe-composer.is-regenerating .scribe-composer__editor textarea {
+  opacity: 0.16;
+}
+
+.scribe-composer__regenerating {
+  position: absolute;
+  inset: 36px 18px 8px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms var(--ease-out);
+}
+
+.scribe-composer.is-regenerating .scribe-composer__regenerating {
+  opacity: 1;
+}
+
+.scribe-composer__regenerating .voice-pill__dots {
+  flex: 1;
+}
+
+.scribe-composer__regenerating .voice-pill__ring {
+  width: 20px;
+  height: 20px;
+  flex-basis: 20px;
+}
+
+.scribe-composer > p {
+  margin: 0 16px 4px;
+  color: rgba(239, 235, 226, 0.5);
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+
+.scribe-composer > p.is-error {
+  color: #cba59e;
+}
+
+.scribe-composer__follow-up {
+  display: grid;
+  height: 34px;
+  grid-template-columns: 16px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 14px 5px;
+  padding: 0 6px 0 10px;
+  color: rgba(208, 185, 142, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.scribe-composer__follow-up input {
+  width: 100%;
+  min-width: 0;
+  color: rgba(247, 244, 237, 0.88);
+  border: 0;
+  background: transparent;
+  font-size: 10.5px;
+  outline: none;
+}
+
+.scribe-composer__follow-up input::placeholder {
+  color: rgba(239, 235, 226, 0.36);
+}
+
+.scribe-composer__follow-up button {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+}
+
+.scribe-composer__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 13px 9px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.045);
+}
+
+.scribe-composer__quick-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.scribe-composer__quick-actions button {
+  height: 28px;
+  gap: 5px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 9.5px;
+}
+
+.scribe-composer__quick-actions button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.scribe-composer__insert {
+  min-width: 78px;
+  height: 32px;
+  gap: 7px;
+  padding: 0 13px !important;
+  color: #252622 !important;
+  border-radius: 999px;
+  background: #f0ede5 !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  font-size: 10.5px;
+  font-weight: 670;
+}
+
+.scribe-composer.is-loading {
+  display: grid;
+  height: 74px;
+  grid-template-columns: 34px 1fr 18px;
+  grid-template-rows: 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  font-size: 11px;
+}
+
+.scribe-composer__loading-mark {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  color: #d0b98e;
+  border-radius: 50%;
+  background: rgba(166, 128, 66, 0.18);
+}
+
+.scribe-composer.is-loading > i {
+  width: 17px;
+  height: 17px;
+  border: 1.5px solid rgba(239, 235, 226, 0.18);
+  border-top-color: #d0b98e;
+  border-radius: 50%;
+  animation: voice-ring-turn 1050ms linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

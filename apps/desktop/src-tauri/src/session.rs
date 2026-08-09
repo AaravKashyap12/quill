@@ -177,7 +177,13 @@ pub fn spawn(
                         }
                         last_failure = error_text.clone();
                     }
-                    hide_overlay(&app);
+                    emit_voice_pill(
+                        &app,
+                        "error",
+                        None,
+                        Some("Couldn't process audio"),
+                        None,
+                    );
                     let status_message = if waiting_for_model {
                         "Waiting for the speech model download".to_owned()
                     } else {
@@ -459,6 +465,7 @@ impl ActiveSession {
             "session started"
         );
         show_overlay(app, mode, true);
+        emit_voice_pill(app, "recording", Some(mode), None, None);
         emit_status(
             app,
             "listening",
@@ -576,10 +583,10 @@ impl ActiveSession {
     }
 
     async fn finish(&mut self, server: &WhisperServer, app: &AppHandle) -> Result<()> {
-        // A stop tap must dismiss the recording affordance immediately. The
-        // final CUDA/cleanup pass can continue without leaving a stale overlay
-        // covering the user's editor.
-        show_overlay(app, self.mode, false);
+        // Keep the same native surface mounted while speech becomes text. The
+        // frontend collapses the live waveform, shows the relevant processing
+        // geometry, then dismisses the window after completion feedback.
+        emit_voice_pill(app, "stopping", Some(self.mode), None, None);
         let _ = app.emit(
             "runtime://audio-level",
             serde_json::json!({
@@ -600,9 +607,6 @@ impl ActiveSession {
         );
         let snapshot = self.audio.snapshot()?;
         if snapshot.duration_ms >= 250 && audio_peak(&snapshot) >= 0.002 {
-            if self.mode == Mode::Scribe {
-                crate::review::show_processing(app, "Transcribing on your device")?;
-            }
             let pass = match server.transcribe(&self.settings, &snapshot.samples).await {
                 Ok(pass) => pass,
                 Err(error) => {
@@ -661,6 +665,23 @@ impl ActiveSession {
                 None,
             );
         } else {
+            if self.transcript.trim().is_empty() {
+                emit_voice_pill(
+                    app,
+                    "error",
+                    Some(self.mode),
+                    Some("No speech detected"),
+                    None,
+                );
+            } else {
+                emit_voice_pill(
+                    app,
+                    "complete",
+                    Some(self.mode),
+                    Some("Text inserted"),
+                    Some(&self.transcript),
+                );
+            }
             emit_status(app, "ready", None, "Ready", None);
         }
         Ok(())
@@ -689,6 +710,13 @@ impl ActiveSession {
             let register =
                 resolve_scribe_register(detected_register, self.settings.default_register);
             crate::review::update_processing(app, "Resolving spoken corrections");
+            emit_voice_pill(
+                app,
+                "generating",
+                Some(Mode::Scribe),
+                Some("Composing your Scribe draft"),
+                None,
+            );
             let cleanup_started = Instant::now();
             let (cleaned, warning) = match cleanup::clean(&self.settings, &source, register).await {
                 Ok(cleaned) => (cleaned, None),
@@ -718,6 +746,13 @@ impl ActiveSession {
                     )
                 }
             };
+            emit_voice_pill(
+                app,
+                "complete",
+                Some(Mode::Scribe),
+                Some("Scribe draft ready"),
+                Some(&cleaned),
+            );
             crate::review::present(
                 app,
                 crate::review::ReviewRequest {
@@ -739,6 +774,13 @@ impl ActiveSession {
             )?;
         } else {
             crate::review::hide_processing(app);
+            emit_voice_pill(
+                app,
+                "error",
+                Some(Mode::Scribe),
+                Some("No speech detected"),
+                None,
+            );
         }
         Ok(())
     }
@@ -1139,6 +1181,22 @@ fn emit_status(
     let _ = app.emit("runtime://status", payload);
 }
 
+fn emit_voice_pill(
+    app: &AppHandle,
+    state: &str,
+    mode: Option<Mode>,
+    message: Option<&str>,
+    preview: Option<&str>,
+) {
+    let payload = serde_json::json!({
+        "state": state,
+        "mode": mode.map(mode_name),
+        "message": message,
+        "preview": preview,
+    });
+    let _ = app.emit("voice-pill://state", payload);
+}
+
 fn show_overlay(app: &AppHandle, mode: Mode, visible: bool) {
     if visible {
         let selected_label = match mode {
@@ -1153,6 +1211,7 @@ fn show_overlay(app: &AppHandle, mode: Mode, visible: bool) {
             let _ = other.hide();
         }
         if let Some(overlay) = app.get_webview_window(selected_label) {
+            let _ = overlay.set_ignore_cursor_events(true);
             crate::position_overlay_bottom_center(&overlay);
             let _ = overlay.show();
         }
