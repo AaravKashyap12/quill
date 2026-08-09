@@ -37,6 +37,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Build pinned macOS whisper.cpp sidecar
         if: runner.os == 'macOS'
         shell: bash

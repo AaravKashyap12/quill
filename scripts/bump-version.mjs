@@ -50,6 +50,24 @@ if (!checkOnly) {
     throw new Error("Could not locate the package version in Cargo.toml");
   }
   fs.writeFileSync(cargoPath, updatedCargo);
+
+  const lockPath = fromRoot("apps/desktop/src-tauri/Cargo.lock");
+  const lock = fs.readFileSync(lockPath, "utf8");
+  const packages = lock.split("[[package]]");
+  const quillIndex = packages.findIndex((block) => block.includes('\nname = "quill"\n'));
+  if (quillIndex < 0) {
+    throw new Error("Could not locate Quill's package entry in Cargo.lock");
+  }
+  const updatedQuillPackage = packages[quillIndex].replace(
+    /(^version\s*=\s*)"[^"]+"/m,
+    `$1"${next}"`,
+  );
+  if (updatedQuillPackage === packages[quillIndex]) {
+    throw new Error("Could not update Quill's package version in Cargo.lock");
+  }
+  packages[quillIndex] = updatedQuillPackage;
+  fs.writeFileSync(lockPath, packages.join("[[package]]"));
+
   console.log(`Updated Quill ${current} → ${next}`);
   process.exit(0);
 }

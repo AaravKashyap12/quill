@@ -73,6 +73,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rustTargets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
       - run: pnpm install --frozen-lockfile
       - name: Build Windows whisper.cpp
         if: runner.os == 'Windows'

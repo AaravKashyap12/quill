@@ -50,8 +50,6 @@ jobs:
             exit 1
           fi
 
-      - uses: dtolnay/rust-toolchain@stable
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -62,14 +60,6 @@ jobs:
           NEXT_VERSION: ${{ inputs.version }}
         run: |
           node scripts/bump-version.mjs "$NEXT_VERSION"
-
-          # Metadata refreshes Quill's own Cargo.lock entry without trying to
-          # compile this Windows/macOS-only application on the Linux runner.
-          cargo metadata \
-            --manifest-path apps/desktop/src-tauri/Cargo.toml \
-            --format-version 1 \
-            --no-deps > /dev/null
-
           node scripts/bump-version.mjs "$NEXT_VERSION" --check
           git diff --check
 
