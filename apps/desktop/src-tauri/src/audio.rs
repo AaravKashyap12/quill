@@ -169,11 +169,8 @@ impl AudioCapture {
         })
     }
 
-    pub fn visual_levels(&self) -> [f32; VISUALIZER_BARS] {
-        self.visual_levels
-            .lock()
-            .map(|levels| *levels)
-            .unwrap_or([0.0; VISUALIZER_BARS])
+    pub(crate) fn visual_levels_handle(&self) -> Arc<Mutex<[f32; VISUALIZER_BARS]>> {
+        Arc::clone(&self.visual_levels)
     }
 }
 
@@ -207,38 +204,27 @@ fn update_visual_levels(visual_levels: &Arc<Mutex<[f32; VISUALIZER_BARS]>>, samp
     };
     let overall_rms =
         (samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32).sqrt();
-    let overall_peak = samples
-        .iter()
-        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
-    // Preserve the sign of real microphone samples so the UI can draw a
-    // continuous waveform above and below its centre line. The envelope
-    // controls height, so louder speech remains visibly taller.
-    let envelope = if overall_rms < 0.0015 {
-        0.0
-    } else {
-        (overall_rms * 24.0).clamp(0.0, 1.0)
-    };
+    // Use a fixed noise floor so the meter remains proportional to the user's
+    // voice instead of normalising every callback to the same apparent volume.
+    // The mild power curve keeps quiet speech visible while preserving plenty
+    // of headroom for louder speech.
+    let envelope = (((overall_rms - 0.002).max(0.0) / 0.078).clamp(0.0, 1.0)).powf(0.68);
     for (index, level) in current.iter_mut().enumerate() {
         let start = index * samples.len() / VISUALIZER_BARS;
         let end = ((index + 1) * samples.len() / VISUALIZER_BARS)
             .max(start + 1)
             .min(samples.len());
         let bucket = &samples[start.min(samples.len() - 1)..end];
-        let signed_peak = bucket
-            .iter()
-            .copied()
-            .max_by(|left, right| {
-                left.abs()
-                    .partial_cmp(&right.abs())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .unwrap_or(0.0);
-        let shape = if overall_peak > 0.000_01 {
-            (signed_peak / overall_peak).clamp(-1.0, 1.0)
+        let bucket_rms =
+            (bucket.iter().map(|sample| sample * sample).sum::<f32>() / bucket.len() as f32).sqrt();
+        let shape = if overall_rms > 0.000_01 {
+            (bucket_rms / overall_rms).clamp(0.35, 1.35)
         } else {
             0.0
         };
-        *level = shape * envelope;
+        let target = (envelope * (0.58 + shape * 0.42)).clamp(0.0, 1.0);
+        let smoothing = if target > *level { 0.62 } else { 0.2 };
+        *level += (target - *level) * smoothing;
     }
 }
 
@@ -303,5 +289,33 @@ mod tests {
         assert!(output
             .iter()
             .all(|sample| (*sample - 0.25).abs() < f32::EPSILON));
+    }
+
+    #[test]
+    fn visual_meter_tracks_speech_volume_and_decays_smoothly() {
+        let levels = Arc::new(Mutex::new([0.0; VISUALIZER_BARS]));
+        let quiet = (0..480)
+            .map(|index| ((index as f32 * 0.19).sin()) * 0.008)
+            .collect::<Vec<_>>();
+        let loud = (0..480)
+            .map(|index| ((index as f32 * 0.19).sin()) * 0.08)
+            .collect::<Vec<_>>();
+
+        update_visual_levels(&levels, &quiet);
+        let quiet_peak = levels.lock().unwrap().iter().copied().fold(0.0, f32::max);
+        update_visual_levels(&levels, &loud);
+        let loud_peak = levels.lock().unwrap().iter().copied().fold(0.0, f32::max);
+        update_visual_levels(&levels, &vec![0.0; 480]);
+        let decay_peak = levels.lock().unwrap().iter().copied().fold(0.0, f32::max);
+
+        assert!(quiet_peak > 0.05, "quiet speech should remain visible");
+        assert!(
+            loud_peak > quiet_peak * 1.8,
+            "louder speech should draw taller bars"
+        );
+        assert!(
+            decay_peak < loud_peak && decay_peak > 0.0,
+            "silence should decay, not snap"
+        );
     }
 }

@@ -3,15 +3,15 @@ import { useEffect, useMemo, useRef } from "react";
 import type { Mode } from "../types";
 import type { VoicePillPhase } from "./RecordingOverlay";
 
-const PRIMITIVE_COUNT = 18;
-const STAGE_WIDTH = 168;
+const PRIMITIVE_COUNT = 15;
+const STAGE_WIDTH = 112;
 const BAR_WIDTH = 3;
-const BAR_STEP = 8.45;
+const BAR_STEP = 7.1;
 const BAR_START = (STAGE_WIDTH - ((PRIMITIVE_COUNT - 1) * BAR_STEP + BAR_WIDTH)) / 2;
-const DOT_STEP = 7.4;
-const PROCESSING_START = 7.75;
-const RING_X = 136;
-const GENERATION_START = 31;
+const DOT_STEP = 5.4;
+const PROCESSING_START = 3;
+const RING_X = 92;
+const GENERATION_START = 18;
 const MIN_SCALE = 0.06;
 const EASE = [0.22, 1, 0.36, 1] as const;
 const DEFAULT_WAVE = Array.from({ length: PRIMITIVE_COUNT }, (_, index) => {
@@ -32,7 +32,7 @@ function projectedLevels(levels?: number[] | null) {
     const centre = 0.45 + 0.55 * Math.sin(((index + 0.5) / PRIMITIVE_COUNT) * Math.PI);
     return Math.max(
       MIN_SCALE,
-      Math.min(1, Math.pow(Math.min(1, sample * 5.2), 0.62) * centre),
+      Math.min(1, Math.pow(Math.min(1, sample * 1.18), 0.72) * centre),
     );
   });
 }
@@ -109,14 +109,14 @@ function targetFor(
     };
   }
   if (phase === "generating") {
-    const row = Math.floor(index / 6);
-    const column = index % 6;
-    const lineWidths = [6, 4, 5];
+    const row = Math.floor(index / 5);
+    const column = index % 5;
+    const lineWidths = [5, 3, 4];
     return {
       ...base,
-      x: GENERATION_START + column * 17.5,
-      y: (row - 1) * 9,
-      scaleX: column < lineWidths[row] ? 5.25 : 0.25,
+      x: GENERATION_START + column * 15,
+      y: (row - 1) * 7,
+      scaleX: column < (lineWidths[row] ?? 0) ? 4.1 : 0.25,
       scaleY: 0.07,
       opacity: column < lineWidths[row] ? [0.28, 0.9, 0.46] : 0.06,
     };
@@ -196,22 +196,16 @@ export function VoiceMorph({
                             duration: 0.42,
                             times: [0, 0.58, 1],
                             ease: EASE,
-                            repeat: Infinity,
-                            repeatDelay: 0.18,
                           },
                           scaleY: {
                             duration: 0.42,
                             times: [0, 0.58, 1],
                             ease: EASE,
-                            repeat: Infinity,
-                            repeatDelay: 0.18,
                           },
                           opacity: {
                             duration: 0.42,
                             times: [0, 0.58, 1],
                             ease: EASE,
-                            repeat: Infinity,
-                            repeatDelay: 0.18,
                           },
                           x: { duration: 0.32, ease: EASE },
                         }

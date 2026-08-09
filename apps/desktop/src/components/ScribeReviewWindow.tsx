@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 import {
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -79,11 +80,20 @@ export function ScribeReviewWindow({
         if (current) applyReview(current, true);
       });
     }
-    const unlisten = listen<ScribeReviewDraft>("scribe-review://updated", (event) => {
-      applyReview(event.payload, working !== "regenerate");
+    let dispose: (() => void) | undefined;
+    let alive = true;
+    void listen<ScribeReviewDraft>("scribe-review://updated", (event) => {
+      if (!alive) return;
+      // Background regeneration updates must never steal focus from the
+      // instruction field or the user's current review position.
+      applyReview(event.payload, false);
+    }).then((unlisten) => {
+      if (alive) dispose = unlisten;
+      else unlisten();
     });
     return () => {
-      void unlisten.then((dispose) => dispose());
+      alive = false;
+      dispose?.();
     };
   }, []);
 
@@ -197,6 +207,7 @@ export function ScribeReviewWindow({
       }}
     >
       <header className="scribe-composer__header" data-tauri-drag-region>
+        <h1>Review draft</h1>
         <span className="scribe-composer__versions" aria-label="Draft versions">
           <button
             type="button"
@@ -229,6 +240,7 @@ export function ScribeReviewWindow({
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
+          <ChevronDown size={12} aria-hidden="true" />
         </label>
 
         <button

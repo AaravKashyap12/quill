@@ -362,9 +362,6 @@ async fn run(
 
         if let Some(session) = active.as_mut() {
             session.flush_pending_if_target_is_foreground(&app)?;
-            if session.last_meter_emit.elapsed() >= Duration::from_millis(42) {
-                session.emit_audio_levels(&app);
-            }
             if session.last_pass.elapsed() >= Duration::from_millis(PASS_INTERVAL_MS) {
                 let snapshot = session.audio.snapshot()?;
                 if snapshot.duration_ms >= MIN_AUDIO_MS
@@ -425,7 +422,7 @@ struct ActiveSession {
     audio: AudioCapture,
     started: Instant,
     last_pass: Instant,
-    last_meter_emit: Instant,
+    meter_running: Arc<AtomicBool>,
     last_audio_ms: u64,
     dictation_agreement: LocalAgreement,
     last_hypothesis: Vec<TimedWord>,
@@ -453,6 +450,23 @@ impl ActiveSession {
             None => injection::capture_target()?,
         };
         let audio = AudioCapture::start(settings.audio_input_device.as_deref())?;
+        let meter_running = Arc::new(AtomicBool::new(true));
+        let meter_task_running = Arc::clone(&meter_running);
+        let meter_levels = audio.visual_levels_handle();
+        let meter_app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            while meter_task_running.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(42)).await;
+                if !meter_task_running.load(Ordering::Acquire) {
+                    break;
+                }
+                let levels = meter_levels
+                    .lock()
+                    .map(|current| *current)
+                    .unwrap_or([0.0; crate::audio::VISUALIZER_BARS]);
+                emit_audio_levels(&meter_app, mode, levels);
+            }
+        });
         tracing::info!(
             mode = mode_name(mode),
             device = %audio.device_name,
@@ -480,7 +494,7 @@ impl ActiveSession {
             audio,
             started: Instant::now(),
             last_pass: Instant::now(),
-            last_meter_emit: Instant::now(),
+            meter_running,
             last_audio_ms: 0,
             dictation_agreement: LocalAgreement::default(),
             last_hypothesis: Vec::new(),
@@ -581,13 +595,8 @@ impl ActiveSession {
         // frontend collapses the live waveform, shows the relevant processing
         // geometry, then dismisses the window after completion feedback.
         emit_voice_pill(app, "stopping", Some(self.mode), None, None);
-        let _ = app.emit(
-            "runtime://audio-level",
-            serde_json::json!({
-                "mode": mode_name(self.mode),
-                "levels": vec![0.0_f32; crate::audio::VISUALIZER_BARS],
-            }),
-        );
+        self.meter_running.store(false, Ordering::Release);
+        emit_audio_levels(app, self.mode, [0.0_f32; crate::audio::VISUALIZER_BARS]);
         emit_status(
             app,
             "processing",
@@ -910,17 +919,6 @@ impl ActiveSession {
         emit_status(app, "listening", Some(self.mode), message, None);
     }
 
-    fn emit_audio_levels(&mut self, app: &AppHandle) {
-        self.last_meter_emit = Instant::now();
-        let _ = app.emit(
-            "runtime://audio-level",
-            serde_json::json!({
-                "mode": mode_name(self.mode),
-                "levels": self.audio.visual_levels(),
-            }),
-        );
-    }
-
     fn take_deferred_insertion(&mut self) -> Option<DeferredInsertion> {
         if self.pending_insertion.is_empty() {
             return None;
@@ -931,6 +929,12 @@ impl ActiveSession {
             use_clipboard: matches!(self.settings.injection_mode, InjectionMode::Clipboard),
             unavailable_notice_sent: false,
         })
+    }
+}
+
+impl Drop for ActiveSession {
+    fn drop(&mut self) {
+        self.meter_running.store(false, Ordering::Release);
     }
 }
 
@@ -1188,7 +1192,33 @@ fn emit_voice_pill(
         "message": message,
         "preview": preview,
     });
-    let _ = app.emit("voice-pill://state", payload);
+    if let Some(mode) = mode {
+        emit_to_overlay(app, mode, "voice-pill://state", payload);
+    } else {
+        let _ = app.emit("voice-pill://state", payload);
+    }
+}
+
+fn emit_audio_levels(app: &AppHandle, mode: Mode, levels: [f32; crate::audio::VISUALIZER_BARS]) {
+    emit_to_overlay(
+        app,
+        mode,
+        "runtime://audio-level",
+        serde_json::json!({
+            "mode": mode_name(mode),
+            "levels": levels,
+        }),
+    );
+}
+
+fn emit_to_overlay(app: &AppHandle, mode: Mode, event: &str, payload: serde_json::Value) {
+    let label = match mode {
+        Mode::Dictation => "overlay",
+        Mode::Scribe => "scribe-overlay",
+    };
+    if let Some(overlay) = app.get_webview_window(label) {
+        let _ = overlay.emit(event, payload);
+    }
 }
 
 fn show_overlay(app: &AppHandle, mode: Mode, visible: bool) {

@@ -2477,26 +2477,6 @@ button:disabled {
 }
 
 /* Waveform — mirrored bar equaliser with an ink gradient fill. */
-.waveform {
-  display: block;
-  width: 84px;
-  height: 22px;
-}
-
-.waveform svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-.waveform__bar {
-  fill: var(--ink-900);
-  transform-box: fill-box;
-  transform-origin: 50% 50%;
-  will-change: transform;
-}
-
 .overlay-page {
   display: grid;
   width: 100%;
@@ -3039,18 +3019,6 @@ button:disabled {
   color: rgba(255, 255, 255, 0.56);
   font-size: 8.5px;
   font-weight: 500;
-}
-
-.pill .waveform {
-  width: 72px;
-}
-
-.pill .waveform__bar {
-  fill: #7fd0c5;
-}
-
-.pill.mode-scribe .waveform__bar {
-  fill: #d4b483;
 }
 
 .review-page {
@@ -3997,8 +3965,8 @@ button:disabled {
    surrounding surface. */
 .voice-pill-wrap {
   display: grid;
-  width: 238px;
-  height: 72px;
+  width: 164px;
+  height: 52px;
   place-items: center;
   pointer-events: none;
 }
@@ -4007,26 +3975,17 @@ button:disabled {
   --pill-accent: #afc8c4;
   --pill-accent-soft: rgba(112, 150, 144, 0.18);
   position: relative;
-  display: flex;
-  width: 198px;
-  height: 58px;
-  align-items: center;
-  gap: 12px;
-  padding: 6px 15px 6px 7px;
+  display: block;
+  width: 134px;
+  height: 38px;
+  padding: 0;
   overflow: hidden;
   color: #f1eee7;
   border: 1px solid rgba(255, 255, 255, 0.105);
   border-radius: 999px;
   background: #1d1e1d;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 3px 9px -4px rgba(0, 0, 0, 0.34);
-  transition:
-    width 300ms var(--ease-out),
-    opacity 200ms var(--ease-out),
-    transform 200ms var(--ease-out),
-    border-color 150ms ease-out;
-  animation: voice-pill-enter 180ms var(--ease-out) both;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 2px 5px -4px rgba(0, 0, 0, 0.28);
+  transition: border-color 150ms ease-out;
   user-select: none;
 }
 
@@ -4035,30 +3994,12 @@ button:disabled {
   --pill-accent-soft: rgba(166, 128, 66, 0.18);
 }
 
-.voice-pill.is-complete {
-  width: 120px;
-}
-
-.voice-pill.is-error {
-  width: 300px;
-}
-
-.voice-pill.is-dismissing {
-  opacity: 0;
-  transform: translateY(4px) scale(0.98);
-}
-
-@keyframes voice-pill-enter {
-  from { opacity: 0; transform: scale(0.98); }
-  to { opacity: 1; transform: scale(1); }
-}
-
 .voice-pill__badge {
   position: relative;
   display: grid;
-  width: 44px;
-  height: 44px;
-  flex: 0 0 44px;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
   place-items: center;
   color: var(--pill-accent);
   border: 1px solid rgba(255, 255, 255, 0.07);
@@ -4067,41 +4008,9 @@ button:disabled {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.075);
 }
 
-.voice-pill__badge::after {
-  content: "";
-  position: absolute;
-  inset: -3px;
-  opacity: 0;
-  border: 1px solid rgba(175, 200, 196, 0.3);
-  border-radius: inherit;
-}
-
-.voice-pill.is-recording .voice-pill__badge::after {
-  animation: voice-badge-breathe 2s ease-in-out infinite;
-}
-
-.voice-pill.mode-scribe .voice-pill__badge::after {
-  border-color: rgba(208, 185, 142, 0.3);
-}
-
-@keyframes voice-badge-breathe {
-  0%, 100% { opacity: 0.28; transform: scale(0.98); }
-  50% { opacity: 0.62; transform: scale(1.015); }
-}
-
 .voice-pill__badge-icon {
   display: grid;
   place-items: center;
-}
-
-.voice-pill.is-complete .voice-pill__badge-icon {
-  animation: voice-check-in 250ms cubic-bezier(0.34, 1.25, 0.64, 1) both;
-}
-
-@keyframes voice-check-in {
-  0% { opacity: 0; transform: scale(0.85); }
-  72% { opacity: 1; transform: scale(1.03); }
-  100% { opacity: 1; transform: scale(1); }
 }
 
 .voice-pill.is-error .voice-pill__badge {
@@ -4122,77 +4031,10 @@ button:disabled {
 .voice-pill__stage {
   position: relative;
   display: block;
-  width: 174px;
-  height: 32px;
+  width: 112px;
+  height: 34px;
   flex: 1 1 auto;
   min-width: 0;
-}
-
-.voice-pill__layer {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  opacity: 0;
-  transform: translateY(2px) scale(0.985);
-  transition:
-    opacity 180ms var(--ease-out),
-    transform 240ms var(--ease-out);
-}
-
-.voice-pill.is-idle .voice-pill__wave-layer,
-.voice-pill.is-recording .voice-pill__wave-layer,
-.voice-pill.is-stopping .voice-pill__wave-layer,
-.voice-pill.is-refining .voice-pill__wave-layer {
-  opacity: 1;
-  transform: none;
-}
-
-.voice-pill.is-transcribing .voice-pill__processing-layer,
-.voice-pill.is-processing .voice-pill__processing-layer {
-  opacity: 1;
-  transform: none;
-}
-
-.voice-pill.is-generating .voice-pill__generation-layer {
-  opacity: 1;
-  transform: none;
-}
-
-.voice-pill.is-complete .voice-pill__complete-layer,
-.voice-pill.is-error .voice-pill__error-layer {
-  opacity: 1;
-  transform: none;
-}
-
-.waveform {
-  display: block;
-  width: 100%;
-  height: 24px;
-}
-
-.waveform svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-.waveform__bar {
-  fill: var(--pill-accent);
-  opacity: 0.94;
-  transform-box: fill-box;
-  transform-origin: center;
-  will-change: transform;
-}
-
-.voice-pill.is-idle .waveform__bar {
-  opacity: 0.34;
-}
-
-.voice-pill__processing-layer {
-  justify-content: space-between;
-  gap: 14px;
 }
 
 .voice-pill__dots {
@@ -4229,65 +4071,6 @@ button:disabled {
 
 @keyframes voice-ring-turn { to { transform: rotate(360deg); } }
 
-.voice-pill__generation-layer {
-  padding: 2px 4px 2px 1px;
-}
-
-.voice-pill__text-lines {
-  display: grid;
-  width: 100%;
-  gap: 5px;
-}
-
-.voice-pill__text-lines i {
-  height: 2px;
-  border-radius: 999px;
-  background: rgba(239, 234, 223, 0.7);
-  transform-origin: left center;
-  animation: voice-line-form 430ms var(--ease-out) both;
-}
-
-.voice-pill__text-lines i:nth-child(1) { width: 88%; }
-.voice-pill__text-lines i:nth-child(2) { width: 66%; animation-delay: 55ms; }
-.voice-pill__text-lines i:nth-child(3) { width: 78%; animation-delay: 105ms; }
-
-@keyframes voice-line-form {
-  from { opacity: 0.3; transform: scaleX(0.06); }
-  to { opacity: 1; transform: scaleX(1); }
-}
-
-.voice-pill__complete-layer span,
-.voice-pill__error-layer span {
-  overflow: hidden;
-  color: rgba(247, 244, 237, 0.94);
-  font-size: 12px;
-  font-weight: 510;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.voice-pill__complete-layer span {
-  animation: voice-copy-in 260ms var(--ease-out) both;
-}
-
-@keyframes voice-copy-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: none; }
-}
-
-.voice-pill__error-layer {
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.voice-pill__error-layer small {
-  flex: none;
-  color: #cba59e;
-  font-size: 10px;
-  font-weight: 620;
-}
-
 /* Scribe uses the same transparent native canvas for the pill and review.
    The canvas remains click-through until the backend makes the composer
    interactive, avoiding a second window or a spatial jump. */
@@ -4298,37 +4081,29 @@ button:disabled {
 
 .voice-pill-wrap.has-composer {
   position: relative;
-  width: 480px;
-  height: 390px;
-  padding: 8px 12px;
+  width: 440px;
+  height: 330px;
+  padding: 8px 14px;
   place-items: end center;
-}
-
-.voice-pill-wrap.is-reviewing .voice-pill,
-.voice-pill-wrap.is-collapsing .voice-pill {
-  visibility: hidden;
-  opacity: 0;
-  transform: translateY(2px) scale(0.985);
-  animation: none;
 }
 
 .scribe-composer {
   position: absolute;
-  right: 12px;
+  right: 14px;
   bottom: 8px;
-  left: 12px;
+  left: 14px;
   display: flex;
-  height: 338px;
+  height: 286px;
   flex-direction: column;
   overflow: hidden;
   color: rgba(247, 244, 237, 0.96);
   border: 1px solid rgba(255, 255, 255, 0.105);
-  border-radius: 20px;
+  border-radius: 18px;
   background: rgba(27, 28, 27, 0.992);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.065),
     inset 0 -1px 0 rgba(0, 0, 0, 0.38),
-    0 16px 34px -24px rgba(0, 0, 0, 0.9);
+    0 10px 24px -20px rgba(0, 0, 0, 0.72);
   transform-origin: bottom center;
   animation: scribe-composer-expand 420ms var(--ease-out) both;
   pointer-events: auto;
@@ -4384,14 +4159,22 @@ button:disabled {
 .scribe-composer__header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px 4px 12px;
-  flex: 0 0 42px;
+  gap: 7px;
+  padding: 7px 8px 5px 12px;
+  flex: 0 0 38px;
+}
+
+.scribe-composer__header h1 {
+  margin: 0;
+  color: rgba(247, 244, 237, 0.9);
+  font-size: 10.5px;
+  font-weight: 610;
+  line-height: 1;
 }
 
 .scribe-composer__versions {
   display: inline-flex;
-  height: 27px;
+  height: 25px;
   align-items: center;
   gap: 2px;
   padding: 0 3px;
@@ -4401,8 +4184,8 @@ button:disabled {
 }
 
 .scribe-composer__versions button {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
 }
 
@@ -4415,12 +4198,24 @@ button:disabled {
 }
 
 .scribe-composer__register {
+  position: relative;
+  display: flex;
+  align-items: center;
   margin-left: auto;
 }
 
+.scribe-composer__register > svg {
+  position: absolute;
+  right: 8px;
+  color: rgba(239, 235, 226, 0.48);
+  pointer-events: none;
+}
+
 .scribe-composer__register select {
-  height: 27px;
-  padding: 0 23px 0 9px;
+  height: 25px;
+  min-width: 74px;
+  padding: 0 24px 0 9px;
+  appearance: none;
   color: rgba(239, 235, 226, 0.68);
   border: 1px solid rgba(255, 255, 255, 0.065);
   border-radius: 999px;
@@ -4435,8 +4230,8 @@ button:disabled {
 }
 
 .scribe-composer__close {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: 1px solid rgba(255, 255, 255, 0.09) !important;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.045) !important;
@@ -4448,16 +4243,18 @@ button:disabled {
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 6px;
-  padding: 7px 16px 5px;
+  margin: 0 10px 5px;
+  padding: 9px 11px 8px;
   flex: 1 1 auto;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.026);
 }
 
 .scribe-composer__editor > label {
-  color: rgba(239, 235, 226, 0.38);
-  font-size: 8.5px;
-  font-weight: 650;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  color: rgba(239, 235, 226, 0.42);
+  font-size: 9px;
+  font-weight: 560;
 }
 
 .scribe-composer__editor textarea {
@@ -4465,15 +4262,26 @@ button:disabled {
   height: 100%;
   min-height: 0;
   resize: none;
-  padding: 4px 1px;
+  padding: 2px 0;
   color: rgba(250, 247, 240, 0.94);
   border: 0;
   background: transparent;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 440;
-  line-height: 1.52;
+  line-height: 1.48;
   outline: none;
+  scrollbar-color: rgba(239, 235, 226, 0.18) transparent;
+  scrollbar-width: thin;
   transition: opacity 170ms var(--ease-out);
+}
+
+.scribe-composer__editor textarea::-webkit-scrollbar {
+  width: 5px;
+}
+
+.scribe-composer__editor textarea::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(239, 235, 226, 0.16);
 }
 
 .scribe-composer.is-regenerating .scribe-composer__editor textarea {
@@ -4482,7 +4290,7 @@ button:disabled {
 
 .scribe-composer__regenerating {
   position: absolute;
-  inset: 36px 18px 8px;
+  inset: 32px 12px 8px;
   display: flex;
   align-items: center;
   gap: 18px;
@@ -4506,7 +4314,7 @@ button:disabled {
 }
 
 .scribe-composer > p {
-  margin: 0 16px 4px;
+  margin: 0 14px 3px;
   color: rgba(239, 235, 226, 0.5);
   font-size: 9.5px;
   line-height: 1.35;
@@ -4518,15 +4326,15 @@ button:disabled {
 
 .scribe-composer__follow-up {
   display: grid;
-  height: 34px;
+  height: 32px;
   grid-template-columns: 16px minmax(0, 1fr) 24px;
   align-items: center;
   gap: 5px;
-  margin: 4px 14px 5px;
+  margin: 3px 10px 5px;
   padding: 0 6px 0 10px;
   color: rgba(208, 185, 142, 0.68);
   border: 1px solid rgba(255, 255, 255, 0.065);
-  border-radius: 10px;
+  border-radius: 9px;
   background: rgba(255, 255, 255, 0.05);
 }
 
@@ -4555,7 +4363,7 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 5px 13px 9px 14px;
+  padding: 5px 10px 8px;
   border-top: 1px solid rgba(255, 255, 255, 0.045);
 }
 
@@ -4565,7 +4373,7 @@ button:disabled {
 }
 
 .scribe-composer__quick-actions button {
-  height: 28px;
+  height: 27px;
   gap: 5px;
   padding: 0 8px;
   border-radius: 8px;
@@ -4577,8 +4385,8 @@ button:disabled {
 }
 
 .scribe-composer__insert {
-  min-width: 78px;
-  height: 32px;
+  min-width: 74px;
+  height: 30px;
   gap: 7px;
   padding: 0 13px !important;
   color: #252622 !important;
@@ -4620,17 +4428,9 @@ button:disabled {
 }
 
 /* Motion-system v2 ---------------------------------------------------------
-   The outer .voice-pill is now the persistent surface. Motion for React owns
-   its bounds; the primitives below stay mounted while they become bars,
-   dots, a progress ring, and Scribe text lines. */
-.voice-pill {
-  display: block;
-  flex: none;
-  padding: 0;
-  animation: none;
-  transition: border-color 150ms ease-out;
-  will-change: width, height, transform, opacity;
-}
+   The outer .voice-pill is the persistent surface. Motion for React owns its
+   bounds; these primitives stay mounted while becoming bars, dots, a progress
+   ring, and Scribe text lines. */
 
 .voice-pill-wrap.is-reviewing .voice-pill,
 .voice-pill-wrap.is-collapsing .voice-pill {
@@ -4644,13 +4444,13 @@ button:disabled {
   width: 100%;
   height: 100%;
   align-items: center;
-  gap: 12px;
-  padding: 6px 15px 6px 7px;
+  gap: 8px;
+  padding: 5px 8px 5px 5px;
 }
 
 .voice-pill__compact:not(.has-status-badge) {
   gap: 0;
-  padding: 6px 14px;
+  padding: 2px 11px;
 }
 
 .voice-pill__compact:not(.has-status-badge) .voice-pill__stage {
@@ -4658,17 +4458,17 @@ button:disabled {
 }
 
 .voice-pill__stage {
-  height: 44px;
+  height: 34px;
   overflow: visible;
 }
 
 .voice-morph {
   position: absolute;
-  top: 1px;
+  top: 0;
   left: 50%;
   display: block;
-  width: 168px;
-  height: 42px;
+  width: 112px;
+  height: 34px;
   transform: translateX(-50%);
 }
 
@@ -4678,18 +4478,18 @@ button:disabled {
   left: 0;
   display: block;
   width: 3px;
-  height: 42px;
+  height: 34px;
   transform-origin: center;
   will-change: transform, opacity;
 }
 
 .voice-morph__ring {
   position: absolute;
-  top: 9px;
-  left: 136px;
+  top: 8px;
+  left: 92px;
   display: block;
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
   border: 1.5px solid rgba(239, 235, 226, 0.2);
   border-top-color: var(--pill-accent);
   border-right-color: rgba(239, 235, 226, 0.7);

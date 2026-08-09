@@ -198,8 +198,8 @@ export function RecordingOverlay({
   const completed = phase === "complete" || phase === "collapsing";
   const showStatusBadge = completed || phase === "error";
   const resolvedPreview = previewText(preview);
-  const successWidth = Math.min(300, Math.max(120, 84 + resolvedPreview.length * 6.2));
-  const compactWidth = phase === "error" ? 300 : completed ? successWidth : 198;
+  const successWidth = Math.min(230, Math.max(90, 58 + resolvedPreview.length * 5.8));
+  const compactWidth = phase === "error" ? 230 : completed ? successWidth : 134;
   const surfaceTransition = reducedMotion
     ? { duration: 0 }
     : { duration: expanded ? 0.42 : 0.3, ease: [0.22, 1, 0.36, 1] as const };
@@ -207,7 +207,7 @@ export function RecordingOverlay({
   return (
     <motion.div
       className={`voice-pill-wrap is-${phase}${composerVisible ? " has-composer" : ""}`}
-      animate={{ width: expanded ? 480 : 238, height: expanded ? 390 : 72 }}
+      animate={{ width: expanded ? 440 : 164, height: expanded ? 330 : 52 }}
       transition={surfaceTransition}
     >
       <motion.section
@@ -215,9 +215,9 @@ export function RecordingOverlay({
         className={`voice-pill mode-${mode} is-${phase}`}
         initial={reducedMotion ? false : { opacity: 0, scale: 0.98 }}
         animate={{
-          width: expanded ? 456 : compactWidth,
-          height: expanded ? 338 : 58,
-          borderRadius: expanded ? 20 : 999,
+          width: expanded ? 412 : compactWidth,
+          height: expanded ? 286 : 38,
+          borderRadius: expanded ? 18 : 999,
           opacity: phase === "dismissing" ? 0 : 1,
           y: phase === "dismissing" ? 4 : 0,
           scale: phase === "dismissing" ? 0.98 : 1,

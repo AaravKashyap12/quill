@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 import type { Mode } from "../types";
@@ -11,31 +11,30 @@ interface AudioLevelPayload {
 /**
  * Live microphone amplitudes (one value per visualiser bar) streamed from the
  * backend while a session is recording. Returns `null` until the first frame
- * arrives, and again once the stream goes quiet, so the waveform can fall back
- * to its idle animation instead of drawing a flat line.
+ * arrives. Silence is represented by real zero-valued frames; a timer must not
+ * reinterpret a temporarily delayed transcription loop as an idle UI state.
  */
 export function useAudioLevels(mode?: Mode): number[] | null {
   const [levels, setLevels] = useState<number[] | null>(null);
-  const idleTimer = useRef<number | null>(null);
-
   useEffect(() => {
     if (!isTauri()) return;
     let alive = true;
-    const unlisten = listen<AudioLevelPayload>("runtime://audio-level", (event) => {
+    let dispose: (() => void) | undefined;
+    void listen<AudioLevelPayload>("runtime://audio-level", (event) => {
       if (!alive) return;
       if (mode && event.payload?.mode && event.payload.mode !== mode) return;
       const next = event.payload?.levels;
-      if (!Array.isArray(next)) return;
+      if (!Array.isArray(next) || next.some((level) => !Number.isFinite(level))) return;
       setLevels(next);
-      if (idleTimer.current) window.clearTimeout(idleTimer.current);
-      // If frames stop arriving, release the live state after a short grace
-      // period so the pill returns to its idle shimmer.
-      idleTimer.current = window.setTimeout(() => setLevels(null), 320);
+    }).then((unlisten) => {
+      if (alive) dispose = unlisten;
+      else unlisten();
+    }).catch(() => {
+      if (alive) setLevels(null);
     });
     return () => {
       alive = false;
-      if (idleTimer.current) window.clearTimeout(idleTimer.current);
-      void unlisten.then((dispose) => dispose());
+      dispose?.();
     };
   }, [mode]);
 
