@@ -3091,6 +3091,14 @@ button:disabled {
   color-scheme: dark;
 }
 
+/* Windows WebView can open a native light menu even when the select itself
+   uses `color-scheme: dark`. Give the popup rows their own palette so they
+   never inherit near-white review text onto a white system background. */
+.review-register select option {
+  color: #f3f0e9;
+  background-color: #292b2a;
+}
+
 .review-register select:focus-visible {
   border-color: rgba(127, 208, 197, 0.54);
   box-shadow: 0 0 0 3px rgba(127, 208, 197, 0.12);
