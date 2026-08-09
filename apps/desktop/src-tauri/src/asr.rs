@@ -267,6 +267,20 @@ impl WhisperServer {
             ));
         }
 
+        // An abrupt Quill exit can leave whisper-server running on Windows.
+        // Its loaded DLLs then block the next NSIS update even after the new
+        // Quill process cleanly stops its own child. The single-instance guard
+        // means any server at this exact packaged path is stale, so remove it
+        // before starting the replacement. Never terminate by process name
+        // alone: other local speech applications may use whisper-server too.
+        #[cfg(windows)]
+        {
+            let stopped = stop_windows_processes_at(&executable)?;
+            if stopped > 0 {
+                tracing::warn!(processes = stopped, "stopped orphaned Quill speech engines");
+            }
+        }
+
         #[cfg(windows)]
         let wants_cuda = matches!(
             settings.backend,
@@ -567,6 +581,103 @@ impl WhisperServer {
 #[cfg(windows)]
 const WINDOWS_WHISPER_RUNTIME_DIR: &str = "resources/whisper/windows-x64-cpu";
 
+/// Stop every orphaned whisper server launched from this exact Quill install.
+/// This is also called immediately before the updater starts NSIS, after the
+/// current session thread has acknowledged that its owned child has exited.
+#[cfg(windows)]
+pub(crate) fn stop_packaged_whisper_processes(app: &AppHandle) -> Result<usize> {
+    let resource_root = app
+        .path()
+        .resource_dir()
+        .context("Tauri did not provide the packaged resource directory")?;
+    let (_, executable) = locate_whisper_runtime(&resource_root)?;
+    stop_windows_processes_at(&executable)
+}
+
+#[cfg(windows)]
+fn stop_windows_processes_at(expected_executable: &Path) -> Result<usize> {
+    use std::mem::{size_of, zeroed};
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, TerminateProcess, WaitForSingleObject,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+    };
+
+    let expected = normalized_windows_path(expected_executable);
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err(std::io::Error::last_os_error())
+            .context("could not inspect local speech engine processes");
+    }
+
+    let mut stopped = 0usize;
+    let mut entry: PROCESSENTRY32W = unsafe { zeroed() };
+    entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+    let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+    while has_entry {
+        let name_length = entry
+            .szExeFile
+            .iter()
+            .position(|character| *character == 0)
+            .unwrap_or(entry.szExeFile.len());
+        let name = String::from_utf16_lossy(&entry.szExeFile[..name_length]);
+        if name.eq_ignore_ascii_case("whisper-server.exe") {
+            let process = unsafe {
+                OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,
+                    0,
+                    entry.th32ProcessID,
+                )
+            };
+            if !process.is_null() {
+                let mut buffer = vec![0u16; 32_768];
+                let mut length = buffer.len() as u32;
+                let queried = unsafe {
+                    QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut length)
+                } != 0;
+                let matches = queried
+                    && normalized_windows_path(Path::new(&String::from_utf16_lossy(
+                        &buffer[..length as usize],
+                    ))) == expected;
+                if matches {
+                    if unsafe { TerminateProcess(process, 1) } == 0 {
+                        let error = std::io::Error::last_os_error();
+                        unsafe { CloseHandle(process) };
+                        unsafe { CloseHandle(snapshot) };
+                        return Err(error)
+                            .context("could not stop an orphaned Quill speech engine");
+                    }
+                    if unsafe { WaitForSingleObject(process, 10_000) } != WAIT_OBJECT_0 {
+                        unsafe { CloseHandle(process) };
+                        unsafe { CloseHandle(snapshot) };
+                        return Err(anyhow!(
+                            "timed out waiting for an orphaned Quill speech engine to stop"
+                        ));
+                    }
+                    stopped += 1;
+                }
+                unsafe { CloseHandle(process) };
+            }
+        }
+        has_entry = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+    }
+    unsafe { CloseHandle(snapshot) };
+    Ok(stopped)
+}
+
+#[cfg(any(windows, test))]
+fn normalized_windows_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('/', "\\")
+        .trim_start_matches("\\\\?\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
 fn locate_whisper_runtime(_resource_root: &Path) -> Result<(PathBuf, PathBuf)> {
     #[cfg(windows)]
     {
@@ -712,6 +823,18 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_process_paths_compare_case_and_separator_insensitively() {
+        assert_eq!(
+            normalized_windows_path(Path::new(
+                r"\\?\C:\Users\Aarav\AppData\Local\Quill\whisper-server.exe"
+            )),
+            normalized_windows_path(Path::new(
+                "c:/users/aarav/appdata/local/quill/whisper-server.exe"
+            ))
+        );
+    }
 
     fn dictionary_entry(id: &str, replacement: &str, kind: DictionaryKind) -> DictionaryEntry {
         DictionaryEntry {

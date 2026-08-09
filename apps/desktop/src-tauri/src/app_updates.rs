@@ -127,6 +127,28 @@ pub async fn install_app_update(
         return Err(error);
     }
 
+    #[cfg(windows)]
+    match crate::asr::stop_packaged_whisper_processes(&app) {
+        Ok(stopped) => {
+            if stopped > 0 {
+                tracing::warn!(
+                    processes = stopped,
+                    "stopped orphaned speech engines before app update"
+                );
+            }
+        }
+        Err(error) => {
+            session_control.resume_after_failed_update();
+            *pending
+                .0
+                .lock()
+                .map_err(|_| "The update state is unavailable".to_string())? = Some(update);
+            return Err(format!(
+                "Quill could not release the local speech engine files: {error}. Quit Quill from the tray and try again."
+            ));
+        }
+    }
+
     if let Err(error) = update.install(bytes) {
         session_control.resume_after_failed_update();
         *pending
