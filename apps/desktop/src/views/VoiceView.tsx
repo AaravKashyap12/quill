@@ -270,40 +270,42 @@ const backendOptions: BackendOption[] = [
   },
 ];
 
-interface CleanupTier {
+export interface CleanupTier {
   id: string;
-  tier: "Light" | "Polish" | "Compose";
+  name: string;
+  tier: "Fast" | "Quality";
   fileSize: string;
-  hardware: string;
+  minimum: string;
+  resources: string;
   quality: string;
 }
 
-/** Curated Ollama models covering basic polish through register-aware Compose.
- *  The 7B floor reflects Quill's correction-resolution evaluation; the
- *  deterministic commitment guard still applies to every tier. */
-const cleanupTiers: readonly CleanupTier[] = [
+/** The two Scribe models Quill has evaluated. Neither is selected implicitly:
+ * installing weights and choosing the active model remain separate actions. */
+export const cleanupTiers: readonly CleanupTier[] = [
   {
-    id: "qwen2.5:0.5b",
-    tier: "Light",
-    fileSize: "~400 MB",
-    hardware: "4 GB RAM, any CPU",
-    quality: "Basic polish only — punctuation and filler removal.",
-  },
-  {
-    id: "qwen2.5:3b",
-    tier: "Polish",
-    fileSize: "~1.9 GB",
-    hardware: "8 GB RAM, CPU or any GPU",
-    quality: "Polish only — not reliable for complex self-corrections.",
+    id: "hf.co/solaarphunk/turbospeak-correction-model:qwen3-1.7b-correction-v5-q4_k_m",
+    name: "TurboSpeak 1.7B",
+    tier: "Fast",
+    fileSize: "~1.1 GB",
+    minimum: "8 GB system RAM",
+    resources: "2 GB free RAM · 1.1 GB disk · CPU supported",
+    quality: "Fastest option. Good cleanup; less reliable on complex corrections.",
   },
   {
     id: "qwen2.5:7b",
-    tier: "Compose",
+    name: "Qwen 2.5 7B",
+    tier: "Quality",
     fileSize: "~4.7 GB",
-    hardware: "16 GB RAM or dedicated GPU",
-    quality: "Recommended minimum for corrections and register-aware rewriting.",
+    minimum: "16 GB system RAM",
+    resources: "8 GB free RAM · 4.7 GB disk · GPU optional",
+    quality: "More reliable corrections and register-aware rewriting; slower on CPU.",
   },
 ];
+
+export function cleanupModelLabel(id: string): string {
+  return cleanupTiers.find((tier) => tier.id === id)?.name ?? id;
+}
 
 const providerInstallers = [
   {
@@ -1011,7 +1013,9 @@ export function VoiceView({
               label="Cleanup model"
               description={
                 availableProvider
-                  ? "Use 7B+ for Compose. Smaller models are best limited to Polish."
+                  ? settings.cleanupModel
+                    ? "Your explicit choice. Quill never switches cleanup models automatically."
+                    : "Required for Scribe. Choose a model after installing it; Quill will not pick one for you."
                   : "Available once a local server is running."
               }
             >
@@ -1020,11 +1024,11 @@ export function VoiceView({
                 onChange={(event) => update("cleanupModel", event.target.value)}
                 disabled={!availableProvider}
               >
-                <option value="">Automatic (prefer Compose 7B+)</option>
+                <option value="" disabled>Choose a cleanup model</option>
                 {providers.flatMap((provider) =>
                   provider.models.map((model) => (
                     <option value={model} key={`${provider.kind}-${model}`}>
-                      {model}
+                      {cleanupModelLabel(model)}
                     </option>
                   )),
                 )}
@@ -1081,12 +1085,12 @@ export function VoiceView({
                               <th scope="row">
                                 {tier.tier}
                                 <span>
-                                  {tier.id} · {tier.fileSize}
+                                  {tier.name} · {tier.fileSize}
                                 </span>
                               </th>
                               <td>
-                                <strong>{tier.hardware.split(", ")[0]}</strong>
-                                <span>{tier.hardware.split(", ").slice(1).join(", ")}</span>
+                                <strong>Minimum: {tier.minimum}</strong>
+                                <span>{tier.resources}</span>
                               </td>
                               <td>{tier.quality}</td>
                               <td className="model-guide__action">
@@ -1156,6 +1160,8 @@ export function VoiceView({
                   <p>
                     Runs `ollama pull` in the background. Files are stored inside
                     Ollama's own model folder and run fully offline afterwards.
+                    Installing does not select a model; choose <strong>Use</strong> after
+                    the download finishes.
                   </p>
                 </details>
               );

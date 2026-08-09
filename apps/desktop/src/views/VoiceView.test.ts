@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  cleanupModelLabel,
+  cleanupTiers,
   modelsForLanguage,
   preferredModelForLanguage,
 } from "./VoiceView";
@@ -50,5 +52,19 @@ describe("Whisper model filtering", () => {
         "large-v3-turbo",
       ]).id,
     ).toBe("large-v3-turbo");
+  });
+});
+
+describe("Scribe cleanup choices", () => {
+  it("offers only the two evaluated recommendations with explicit requirements", () => {
+    expect(cleanupTiers.map((tier) => tier.name)).toEqual([
+      "TurboSpeak 1.7B",
+      "Qwen 2.5 7B",
+    ]);
+    expect(cleanupTiers.every((tier) => tier.minimum && tier.resources)).toBe(true);
+  });
+
+  it("uses a readable label for TurboSpeak's Hugging Face model id", () => {
+    expect(cleanupModelLabel(cleanupTiers[0].id)).toBe("TurboSpeak 1.7B");
   });
 });

@@ -3,8 +3,8 @@ use anyhow::{anyhow, Result};
 use arboard::Clipboard;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
-    VK_CONTROL,
+    GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+    KEYEVENTF_UNICODE, VK_CONTROL,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, IsWindow, SendMessageTimeoutW,
@@ -184,6 +184,7 @@ fn send(inputs: &mut [INPUT]) -> Result<()> {
 }
 
 fn keyboard_input(code: u16, flags: u32) -> INPUT {
+    const QUILL_INPUT_MARKER: usize = 0x0051_5549_4C4C;
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
@@ -200,7 +201,7 @@ fn keyboard_input(code: u16, flags: u32) -> INPUT {
                 },
                 dwFlags: flags,
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: QUILL_INPUT_MARKER,
             },
         },
     }
@@ -216,12 +217,48 @@ pub fn type_unicode(text: &str) -> Result<()> {
 }
 
 pub fn paste() -> Result<()> {
-    const KEY_V: u16 = b'V' as u16;
-    let mut inputs = [
-        keyboard_input(VK_CONTROL, 0),
-        keyboard_input(KEY_V, 0),
-        keyboard_input(KEY_V, KEYEVENTF_KEYUP),
-        keyboard_input(VK_CONTROL, KEYEVENTF_KEYUP),
-    ];
+    let ctrl_is_physically_down =
+        unsafe { GetAsyncKeyState(VK_CONTROL as i32) as u16 & 0x8000 != 0 };
+    let mut inputs = paste_inputs(ctrl_is_physically_down);
     send(&mut inputs)
+}
+
+fn paste_inputs(ctrl_is_physically_down: bool) -> Vec<INPUT> {
+    const KEY_V: u16 = b'V' as u16;
+    let mut inputs = Vec::with_capacity(if ctrl_is_physically_down { 2 } else { 4 });
+    if !ctrl_is_physically_down {
+        inputs.push(keyboard_input(VK_CONTROL, 0));
+    }
+    inputs.push(keyboard_input(KEY_V, 0));
+    inputs.push(keyboard_input(KEY_V, KEYEVENTF_KEYUP));
+    if !ctrl_is_physically_down {
+        inputs.push(keyboard_input(VK_CONTROL, KEYEVENTF_KEYUP));
+    }
+    inputs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paste_does_not_release_a_physically_held_control_key() {
+        let inputs = paste_inputs(true);
+        assert_eq!(inputs.len(), 2);
+        assert!(inputs
+            .iter()
+            .all(|input| unsafe { input.Anonymous.ki.wVk != VK_CONTROL }));
+    }
+
+    #[test]
+    fn paste_wraps_v_with_control_when_control_is_not_held() {
+        let inputs = paste_inputs(false);
+        assert_eq!(inputs.len(), 4);
+        assert_eq!(unsafe { inputs[0].Anonymous.ki.wVk }, VK_CONTROL);
+        assert_eq!(unsafe { inputs[3].Anonymous.ki.wVk }, VK_CONTROL);
+        assert_ne!(
+            unsafe { inputs[3].Anonymous.ki.dwFlags } & KEYEVENTF_KEYUP,
+            0
+        );
+    }
 }

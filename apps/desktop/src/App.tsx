@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 import { BrandMark } from "./components/BrandMark";
+import { isScribeReady } from "./scribe";
 import { AppUpdateBanner } from "./components/AppUpdateBanner";
 import {
   FirstRunSetup,
@@ -326,9 +327,7 @@ export function App() {
     void persistSettings(persisted);
   }
 
-  const scribeReady = providers.some(
-    (provider) => provider.available && provider.models.length > 0,
-  );
+  const scribeReady = isScribeReady(settings, providers);
   const showScribeSetup =
     providersChecked &&
     settings.cleanupProvider !== "disabled" &&

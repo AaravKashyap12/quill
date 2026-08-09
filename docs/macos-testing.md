@@ -42,8 +42,10 @@ Audio and transcripts stay on your machine.
 1. Keep Quill open while the first-run setup downloads `medium.en` (about
    1.5 GB). Confirm progress appears in both the setup sheet and the sidebar,
    then disappears when the model is ready.
-2. Optional, for the Scribe feature: install [Ollama](https://ollama.com/) and
-   run `ollama pull qwen2.5:7b`. Skip this if you only want to test Dictation.
+2. Optional, for the Scribe feature: install [Ollama](https://ollama.com/), then
+   open **Voice → Cleanup model**. Quill must not select a model automatically.
+   Choose TurboSpeak 1.7B (8 GB system RAM minimum) or Qwen 2.5 7B (16 GB
+   system RAM minimum). Skip this if you only want to test Dictation.
 
 ## 3. What to test
 

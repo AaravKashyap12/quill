@@ -25,6 +25,10 @@ export function RecordingOverlay({ mode, locked = false }: RecordingOverlayProps
           <Icon size={14} strokeWidth={2} />
           {locked ? <LockKeyhole className="pill__lock" size={9} strokeWidth={2.2} /> : null}
         </span>
+        <span className="pill__mode" aria-hidden="true">
+          <b>{isDictation ? "Dictation" : "Scribe"}</b>
+          <small>{locked ? "Tap to finish" : "Listening"}</small>
+        </span>
         <Waveform active levels={levels} />
       </div>
     </div>

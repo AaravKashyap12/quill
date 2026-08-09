@@ -224,12 +224,9 @@ async fn run(
     #[cfg(windows)]
     let mut loaded_cuda_generation = downloads::cuda_runtime_generation(&app);
     emit_status(&app, "ready", None, server.ready_message(), None);
-    // Clear any low-bit key history left from before this process/server
-    // started so tap-to-lock never begins recording on launch or restart.
-    let _ = hotkeys::poll_pair(
-        &startup_settings.dictation_hotkey,
-        &startup_settings.scribe_hotkey,
-    );
+    // Install the native listener before accepting any shortcut. Its event
+    // queue stays responsive even while this async loop awaits Whisper.
+    let mut hotkey_monitor = hotkeys::HotkeyMonitor::start()?;
 
     let mut dictation_key = KeyRuntime::default();
     let mut scribe_key = KeyRuntime::default();
@@ -289,36 +286,39 @@ async fn run(
         if active.is_none() {
             flush_deferred_insertions(&mut deferred_insertions, &app)?;
         }
-        let (dictation_state, scribe_state) =
-            hotkeys::poll_pair(&settings.dictation_hotkey, &settings.scribe_hotkey);
+        let state_changes =
+            hotkey_monitor.drain_pair(&settings.dictation_hotkey, &settings.scribe_hotkey);
         // The settings UI captures a new shortcut by listening for a keypress
         // in a focused button. Actually firing the mode in parallel would open
         // the overlay every time the user pressed their current hotkey. While
         // capture is on we drop the poll result but leave the key runtime in
         // sync, so releasing the keys does not leave a stuck state.
         let capturing = hotkey_capture.load(Ordering::Relaxed);
-        let (mut dictation_active, mut scribe_active) = if capturing {
-            let _ = dictation_key.update(dictation_state, &settings.dictation_hotkey);
-            let _ = scribe_key.update(scribe_state, &settings.scribe_hotkey);
+        let (dictation_active, scribe_active) = if capturing {
+            for (dictation_state, scribe_state) in state_changes {
+                let _ = dictation_key.update(dictation_state, &settings.dictation_hotkey);
+                let _ = scribe_key.update(scribe_state, &settings.scribe_hotkey);
+            }
             dictation_key.unlock();
             scribe_key.unlock();
             (false, false)
         } else {
-            (
-                dictation_key.update(dictation_state, &settings.dictation_hotkey),
-                scribe_key.update(scribe_state, &settings.scribe_hotkey),
-            )
+            let mut dictation_active = dictation_key.active(&settings.dictation_hotkey);
+            let mut scribe_active = scribe_key.active(&settings.scribe_hotkey);
+            for (dictation_state, scribe_state) in state_changes {
+                dictation_active =
+                    dictation_key.update(dictation_state, &settings.dictation_hotkey);
+                scribe_active = scribe_key.update(scribe_state, &settings.scribe_hotkey);
+                if dictation_key.just_pressed && dictation_active {
+                    scribe_key.unlock();
+                    scribe_active = false;
+                } else if scribe_key.just_pressed && scribe_active {
+                    dictation_key.unlock();
+                    dictation_active = false;
+                }
+            }
+            (dictation_active, scribe_active)
         };
-        // In tap-to-lock mode the hotkey itself is the mode switch. Starting
-        // one mode must release the other mode's latch, otherwise stopping
-        // Scribe can unexpectedly resume an older Dictation session.
-        if dictation_key.just_pressed && dictation_active {
-            scribe_key.unlock();
-            scribe_active = false;
-        } else if scribe_key.just_pressed && scribe_active {
-            dictation_key.unlock();
-            dictation_active = false;
-        }
         let desired_mode = if scribe_active {
             Some(Mode::Scribe)
         } else if dictation_active {
@@ -406,6 +406,13 @@ impl KeyRuntime {
 
     fn unlock(&mut self) {
         self.locked = false;
+    }
+
+    fn active(&self, config: &HotkeyConfig) -> bool {
+        match config.behavior {
+            HotkeyBehavior::Hold => self.was_down,
+            HotkeyBehavior::TapToLock => self.locked,
+        }
     }
 }
 
@@ -1363,5 +1370,52 @@ mod tests {
             },
             &config,
         ));
+    }
+
+    #[test]
+    fn hold_stays_active_during_cycles_without_new_key_events() {
+        let config = HotkeyConfig {
+            modifiers: vec!["Ctrl".into()],
+            key: "Space".into(),
+            behavior: HotkeyBehavior::Hold,
+        };
+        let mut runtime = KeyRuntime::default();
+        assert!(runtime.update(
+            hotkeys::HotkeyState {
+                down: true,
+                pressed: true,
+            },
+            &config,
+        ));
+
+        // A long ASR request produces no keyboard events. The held state is
+        // retained instead of being inferred from the session loop cadence.
+        assert!(runtime.active(&config));
+        assert!(runtime.active(&config));
+    }
+
+    #[test]
+    fn queued_tap_down_and_up_toggle_exactly_once_after_a_delay() {
+        let config = HotkeyConfig {
+            modifiers: vec!["Ctrl".into()],
+            key: "Space".into(),
+            behavior: HotkeyBehavior::TapToLock,
+        };
+        let mut runtime = KeyRuntime::default();
+        let delayed_events = [
+            hotkeys::HotkeyState {
+                down: true,
+                pressed: true,
+            },
+            hotkeys::HotkeyState {
+                down: false,
+                pressed: false,
+            },
+        ];
+
+        for event in delayed_events {
+            runtime.update(event, &config);
+        }
+        assert!(runtime.active(&config));
     }
 }

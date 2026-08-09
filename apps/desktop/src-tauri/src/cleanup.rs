@@ -325,17 +325,6 @@ struct OllamaModel {
     name: String,
 }
 
-const PREFERRED_COMPOSE_MODELS: &[&str] = &["qwen2.5:7b"];
-
-fn select_ollama_model(models: Vec<OllamaModel>) -> Option<String> {
-    for preferred in PREFERRED_COMPOSE_MODELS {
-        if let Some(model) = models.iter().find(|model| model.name == *preferred) {
-            return Some(model.name.clone());
-        }
-    }
-    models.into_iter().map(|model| model.name).next()
-}
-
 #[derive(Deserialize)]
 struct OpenAiModels {
     data: Vec<OpenAiModel>,
@@ -364,6 +353,7 @@ pub async fn detect_providers() -> Vec<ProviderStatus> {
         .await
         .ok()
         .and_then(|response| response.error_for_status().ok());
+    let ollama_available = ollama.is_some();
     let ollama_models = match ollama {
         Some(response) => response
             .json::<OllamaTags>()
@@ -375,7 +365,7 @@ pub async fn detect_providers() -> Vec<ProviderStatus> {
     providers.push(ProviderStatus {
         kind: "ollama".into(),
         base_url: OLLAMA_URL.into(),
-        available: !ollama_models.is_empty(),
+        available: ollama_available,
         models: ollama_models,
     });
 
@@ -386,6 +376,7 @@ pub async fn detect_providers() -> Vec<ProviderStatus> {
             .await
             .ok()
             .and_then(|response| response.error_for_status().ok());
+        let available = models.is_some();
         let model_ids = match models {
             Some(response) => response
                 .json::<OpenAiModels>()
@@ -397,7 +388,7 @@ pub async fn detect_providers() -> Vec<ProviderStatus> {
         providers.push(ProviderStatus {
             kind: "openai-compatible".into(),
             base_url: base_url.into(),
-            available: !model_ids.is_empty(),
+            available,
             models: model_ids,
         });
     }
@@ -427,7 +418,7 @@ pub async fn warm_up(settings: AppSettings) {
         return;
     };
 
-    let model = match resolve_model(&client, &settings, protocol, &base_url).await {
+    let model = match resolve_model(&settings) {
         Ok(m) => m,
         Err(err) => {
             tracing::debug!(%err, "cleanup warm-up skipped: could not resolve a model");
@@ -643,7 +634,7 @@ async fn clean_with_outcome(
         .no_proxy()
         .timeout(Duration::from_secs(90))
         .build()?;
-    let model = resolve_model(&client, settings, protocol, &base_url).await?;
+    let model = resolve_model(settings)?;
 
     let provider_output = match protocol {
         Protocol::Ollama => {
@@ -653,6 +644,7 @@ async fn clean_with_outcome(
                     "model": model,
                     "prompt": request_prompt,
                     "stream": false,
+                    "think": false,
                     "keep_alive": "10m",
                     "options": {
                         "temperature": 0.0,
@@ -757,43 +749,14 @@ fn ensure_loopback(base_url: &str) -> Result<()> {
     Ok(())
 }
 
-async fn resolve_model(
-    client: &Client,
-    settings: &AppSettings,
-    protocol: Protocol,
-    base_url: &str,
-) -> Result<String> {
-    if !settings.cleanup_model.trim().is_empty() {
-        return Ok(settings.cleanup_model.clone());
+fn resolve_model(settings: &AppSettings) -> Result<String> {
+    let model = settings.cleanup_model.trim();
+    if model.is_empty() {
+        return Err(anyhow!(
+            "Choose a Scribe cleanup model in Voice settings before using Scribe"
+        ));
     }
-    match protocol {
-        Protocol::Ollama => {
-            let tags = client
-                .get(format!("{base_url}/api/tags"))
-                .send()
-                .await?
-                .error_for_status()?
-                .json::<OllamaTags>()
-                .await?;
-            select_ollama_model(tags.models)
-                .ok_or_else(|| anyhow!("Ollama is running but has no local cleanup model"))
-        }
-        Protocol::OpenAiCompatible => {
-            let models = client
-                .get(format!("{base_url}/v1/models"))
-                .send()
-                .await?
-                .error_for_status()?
-                .json::<OpenAiModels>()
-                .await?;
-            models
-                .data
-                .into_iter()
-                .map(|model| model.id)
-                .next()
-                .ok_or_else(|| anyhow!("local cleanup server has no loaded model"))
-        }
-    }
+    Ok(model.to_owned())
 }
 
 #[cfg(test)]
@@ -1029,24 +992,16 @@ mod tests {
     }
 
     #[test]
-    fn automatic_ollama_selection_prefers_a_compose_capable_model() {
-        let selected = select_ollama_model(vec![
-            OllamaModel {
-                name: "llama3.1:8b".into(),
-            },
-            OllamaModel {
-                name: "qwen2.5:3b".into(),
-            },
-            OllamaModel {
-                name: "qwen2.5:7b".into(),
-            },
-        ]);
-        assert_eq!(selected.as_deref(), Some("qwen2.5:7b"));
+    fn cleanup_model_must_be_chosen_explicitly() {
+        let settings = AppSettings::default();
+        let error = resolve_model(&settings).unwrap_err().to_string();
+        assert!(error.contains("Choose a Scribe cleanup model"));
 
-        let fallback = select_ollama_model(vec![OllamaModel {
-            name: "qwen2.5:3b".into(),
-        }]);
-        assert_eq!(fallback.as_deref(), Some("qwen2.5:3b"));
+        let settings = AppSettings {
+            cleanup_model: "  qwen2.5:7b  ".into(),
+            ..AppSettings::default()
+        };
+        assert_eq!(resolve_model(&settings).unwrap(), "qwen2.5:7b");
     }
 
     #[test]

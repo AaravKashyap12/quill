@@ -74,7 +74,10 @@ export async function detectProviders(): Promise<ProviderStatus[]> {
         kind: "ollama",
         baseUrl: "http://127.0.0.1:11434",
         available: true,
-        models: ["qwen2.5:3b", "qwen2.5:7b"],
+        models: [
+          "hf.co/solaarphunk/turbospeak-correction-model:qwen3-1.7b-correction-v5-q4_k_m",
+          "qwen2.5:7b",
+        ],
       },
     ];
   }

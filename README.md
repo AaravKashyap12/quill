@@ -97,10 +97,15 @@ absent from the transcript.
   - [Ollama](https://ollama.com/)
   - LM Studio, Jan, or llama.cpp server exposing an OpenAI-compatible endpoint
 
-A 7B+ instruct model is the recommended minimum for register-aware Compose and
-reliable self-correction resolution. Smaller models remain useful for basic
-Polish, such as punctuation and filler removal. Dictation never uses the cleanup
-model.
+Scribe does not choose a cleanup model automatically. After connecting Ollama,
+the user explicitly selects one of Quill's evaluated options:
+
+| Scribe model | Download | Clear minimum | Trade-off |
+| --- | ---: | --- | --- |
+| TurboSpeak 1.7B | ~1.1 GB | 8 GB system RAM, 2 GB free RAM, 1.1 GB disk | Fast on CPU; less reliable on complex corrections |
+| Qwen 2.5 7B | ~4.7 GB | 16 GB system RAM, 8 GB free RAM, 4.7 GB disk | Stronger corrections and register-aware rewriting; slower on CPU |
+
+A dedicated GPU is optional for both. Dictation never uses the cleanup model.
 
 ### Speech model requirements
 

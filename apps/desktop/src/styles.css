@@ -2952,6 +2952,210 @@ button:disabled {
   opacity: 0.5;
 }
 
+/* Premium transient surfaces. These are the only glass treatments in the app:
+   short-lived, always-on-top tools where translucency preserves visual context. */
+.pill-halo {
+  inset: -10px 8px;
+  background: radial-gradient(closest-side, rgba(15, 76, 70, 0.2), transparent 74%);
+  filter: blur(10px);
+}
+
+.pill {
+  gap: 10px;
+  width: 216px;
+  min-width: 216px;
+  height: 50px;
+  padding: 6px 13px 6px 6px;
+  color: rgba(255, 255, 255, 0.94);
+  border-color: rgba(255, 255, 255, 0.14);
+  background: linear-gradient(180deg, rgba(48, 51, 52, 0.94), rgba(25, 27, 28, 0.94));
+  backdrop-filter: blur(22px) saturate(125%);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.13),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.28),
+    0 8px 14px -10px rgba(5, 10, 12, 0.72);
+}
+
+.pill.mode-scribe {
+  background: linear-gradient(180deg, rgba(51, 50, 47, 0.95), rgba(27, 27, 26, 0.95));
+}
+
+.pill__badge {
+  width: 36px;
+  height: 36px;
+  color: #ecf8f5;
+  background: rgba(23, 117, 106, 0.72);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 3px 8px -4px rgba(0, 0, 0, 0.55);
+}
+
+.mode-scribe .pill__badge {
+  color: #fff8eb;
+  background: rgba(122, 90, 36, 0.78);
+}
+
+.pill__badge::after {
+  border-width: 1px;
+  border-color: rgba(212, 180, 131, 0.42);
+}
+
+.pill__lock {
+  color: #17201f;
+  background: #f5f2eb;
+}
+
+.pill__mode {
+  display: grid;
+  min-width: 58px;
+  gap: 1px;
+  line-height: 1.05;
+}
+
+.pill__mode b {
+  color: rgba(255, 255, 255, 0.96);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.pill__mode small {
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 8.5px;
+  font-weight: 500;
+}
+
+.pill .waveform {
+  width: 72px;
+}
+
+.pill .waveform__bar {
+  fill: #7fd0c5;
+}
+
+.pill.mode-scribe .waveform__bar {
+  fill: #d4b483;
+}
+
+.review-page {
+  --review-ink: rgba(252, 251, 247, 0.96);
+  --review-muted: rgba(235, 235, 230, 0.64);
+  --review-dim: rgba(235, 235, 230, 0.46);
+  --review-line: rgba(255, 255, 255, 0.1);
+}
+
+.review-card,
+.review-suggestion {
+  color: var(--review-ink);
+  border-color: rgba(255, 255, 255, 0.12);
+  background: linear-gradient(145deg, rgba(49, 52, 53, 0.94), rgba(24, 26, 27, 0.96));
+  backdrop-filter: blur(26px) saturate(120%);
+  -webkit-backdrop-filter: blur(26px) saturate(120%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 8px 14px -10px rgba(4, 8, 10, 0.76);
+}
+
+.review-card { border-radius: 16px; }
+
+.review-loading-mark {
+  color: #fff8eb;
+  background: rgba(122, 90, 36, 0.78);
+}
+
+.review-loading-copy b,
+.review-heading b { color: var(--review-ink); }
+
+.review-card--loading,
+.review-loading-copy span,
+.review-loading-spinner,
+.review-heading small,
+.review-message,
+.review-source,
+.review-suggestion p > span:first-child { color: var(--review-muted); }
+
+.review-card--loading small,
+.review-register { color: var(--review-dim); }
+
+.review-header { border-bottom-color: var(--review-line); }
+
+.review-mark {
+  color: #fff8eb;
+  background: rgba(122, 90, 36, 0.76);
+}
+
+.review-register select {
+  color: var(--review-ink);
+  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--review-line);
+  color-scheme: dark;
+}
+
+.review-register select:focus-visible {
+  border-color: rgba(127, 208, 197, 0.54);
+  box-shadow: 0 0 0 3px rgba(127, 208, 197, 0.12);
+}
+
+.review-local {
+  color: var(--review-muted);
+  border-color: var(--review-line);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.review-editor label { color: var(--review-dim); }
+
+.review-editor textarea {
+  color: var(--review-ink);
+  caret-color: #7fd0c5;
+  background: rgba(5, 9, 10, 0.28);
+  border-color: var(--review-line);
+}
+
+.review-editor textarea:focus {
+  border-color: rgba(127, 208, 197, 0.48);
+  box-shadow: 0 0 0 3px rgba(127, 208, 197, 0.1);
+}
+
+.review-source p { border-left-color: var(--review-line); }
+
+.review-button {
+  color: var(--review-ink);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--review-line);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.review-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.review-button--quiet {
+  color: var(--review-muted);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.review-button--quiet:hover:not(:disabled) {
+  color: var(--review-ink);
+  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--review-line);
+}
+
+.review-button--primary {
+  color: #10201e;
+  background: #a8d8d1;
+  border-color: #a8d8d1;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34);
+}
+
+.review-button--primary:hover:not(:disabled) {
+  color: #0b1715;
+  background: #b9e3dd;
+  border-color: #b9e3dd;
+}
+
 /* ── RECOVERY BANNER (surviving-a-crash prompt) ─────── */
 .recovery-banner {
   margin: 24px 32px 0;

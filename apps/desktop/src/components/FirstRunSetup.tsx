@@ -125,7 +125,11 @@ export function FirstRunSetup({
                 <strong>Scribe</strong>
                 <span>Optional</span>
               </div>
-              <p>Install a local writing model to clean up wording before you approve it.</p>
+              <p>
+                Choose TurboSpeak 1.7B for speed (8 GB RAM minimum) or Qwen 2.5
+                7B for stronger corrections (16 GB RAM minimum). Nothing is
+                selected automatically.
+              </p>
               <div className="setup-step__actions">
                 <button
                   className="primary-button compact"

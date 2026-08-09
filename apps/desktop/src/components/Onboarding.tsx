@@ -269,7 +269,7 @@ export function Onboarding({
               <p className="onboarding-lede compact">
                 {scribeReady
                   ? "Your local writing model is connected. Scribe can clean up wording before you approve it."
-                  : "Scribe uses a separate local writing model. Dictation already works without it."}
+                  : "Scribe uses a separate local writing model. Choose TurboSpeak 1.7B for speed (8 GB RAM minimum) or Qwen 2.5 7B for stronger corrections (16 GB RAM minimum). Quill will not choose for you."}
               </p>
               <div className="onboarding-choice-actions">
                 {scribeReady ? (
