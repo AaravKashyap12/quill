@@ -1,11 +1,36 @@
 name: Native release
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag, for example v0.2.6
+        required: true
+        type: string
+      ref:
+        description: Commit SHA to build
+        required: true
+        type: string
+      publish:
+        description: Publish after every platform finishes uploading
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag, for example v0.1.0
+        description: Release tag, for example v0.2.6
         required: true
+        type: string
+      ref:
+        description: Commit SHA to build (defaults to the selected branch)
+        required: false
+        type: string
+      publish:
+        description: Publish immediately after the signed builds finish
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -29,6 +54,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - name: Validate updater signing key
         shell: bash
         env:
@@ -87,3 +114,14 @@ jobs:
           # Upload separately from tauri-action so these files cannot be
           # mistaken for updater archives or added to latest.json.
           gh release upload "${{ inputs.tag }}" $assets --clobber
+
+  publish:
+    name: Publish update
+    if: ${{ inputs.publish }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release for the in-app updater
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ inputs.tag }}" --repo "${{ github.repository }}" --draft=false --latest

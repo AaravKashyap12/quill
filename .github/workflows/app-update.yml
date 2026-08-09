@@ -1,0 +1,103 @@
+name: Publish app update
+run-name: Publish Quill v${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: New version without the v prefix, for example 0.2.6
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: publish-app-update
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump version on main
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.commit.outputs.tag }}
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Require green CI for current main
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          head_sha="$(git rev-parse HEAD)"
+          conclusion="$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow ci.yml \
+            --branch main \
+            --commit "$head_sha" \
+            --event push \
+            --limit 1 \
+            --json conclusion \
+            --jq '.[0].conclusion // "missing"')"
+          if [[ "$conclusion" != "success" ]]; then
+            echo "The latest main commit must have a successful CI run before publishing. Current result: $conclusion" >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Update every version source
+        shell: bash
+        env:
+          NEXT_VERSION: ${{ inputs.version }}
+        run: |
+          node scripts/bump-version.mjs "$NEXT_VERSION"
+
+          # Metadata refreshes Quill's own Cargo.lock entry without trying to
+          # compile this Windows/macOS-only application on the Linux runner.
+          cargo metadata \
+            --manifest-path apps/desktop/src-tauri/Cargo.toml \
+            --format-version 1 \
+            --no-deps > /dev/null
+
+          node scripts/bump-version.mjs "$NEXT_VERSION" --check
+          git diff --check
+
+      - name: Commit version bump
+        id: commit
+        shell: bash
+        env:
+          NEXT_VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            package.json \
+            apps/desktop/package.json \
+            apps/desktop/src-tauri/Cargo.toml \
+            apps/desktop/src-tauri/Cargo.lock \
+            apps/desktop/src-tauri/tauri.conf.json
+          git commit -m "Prepare v${NEXT_VERSION} release"
+          git push origin HEAD:main
+          echo "tag=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Build and publish signed update
+    needs: bump
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.bump.outputs.tag }}
+      ref: ${{ needs.bump.outputs.sha }}
+      publish: true
+    secrets: inherit
