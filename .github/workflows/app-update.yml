@@ -36,17 +36,73 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           head_sha="$(git rev-parse HEAD)"
-          conclusion="$(gh run list \
-            --repo "${{ github.repository }}" \
-            --workflow ci.yml \
-            --branch main \
-            --commit "$head_sha" \
-            --event push \
-            --limit 1 \
-            --json conclusion \
-            --jq '.[0].conclusion // "missing"')"
-          if [[ "$conclusion" != "success" ]]; then
-            echo "The latest main commit must have a successful CI run before publishing. Current result: $conclusion" >&2
+          verification_sha="$head_sha"
+          release_author="41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Commits pushed with GITHUB_TOKEN do not trigger another workflow.
+          # Walk past only release commits that exactly match this workflow's
+          # bot identity, message, and version-file allowlist.
+          while true; do
+            author="$(git show -s --format=%ae "$verification_sha")"
+            subject="$(git show -s --format=%s "$verification_sha")"
+            if [[ "$author" != "$release_author" || ! "$subject" =~ ^Prepare\ v[0-9]+\.[0-9]+\.[0-9]+\ release$ ]]; then
+              break
+            fi
+
+            mapfile -t changed_files < <(git diff-tree --no-commit-id --name-only -r "$verification_sha")
+            if [[ "${#changed_files[@]}" -ne 5 ]]; then
+              echo "Release commit $verification_sha changed ${#changed_files[@]} files; expected exactly five version files." >&2
+              exit 1
+            fi
+
+            for file in "${changed_files[@]}"; do
+              case "$file" in
+                package.json|apps/desktop/package.json|apps/desktop/src-tauri/Cargo.toml|apps/desktop/src-tauri/Cargo.lock|apps/desktop/src-tauri/tauri.conf.json) ;;
+                *)
+                  echo "Release commit $verification_sha changed unexpected file: $file" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+
+            echo "Release-only commit $verification_sha has no CI run by GitHub design; checking its parent."
+            verification_sha="$(git rev-parse "$verification_sha^")"
+          done
+
+          echo "Requiring successful CI for source commit $verification_sha."
+          for attempt in $(seq 1 80); do
+            run_state="$(gh run list \
+              --repo "${{ github.repository }}" \
+              --workflow ci.yml \
+              --branch main \
+              --commit "$verification_sha" \
+              --event push \
+              --limit 1 \
+              --json databaseId,status,conclusion \
+              --jq '.[0] | [.databaseId, .status, (.conclusion // "")] | @tsv')"
+
+            if [[ -z "$run_state" ]]; then
+              echo "CI has not appeared yet (attempt $attempt/80); waiting 15 seconds."
+              sleep 15
+              continue
+            fi
+
+            IFS=$'\t' read -r run_id status conclusion <<< "$run_state"
+            if [[ "$status" == "completed" ]]; then
+              if [[ "$conclusion" == "success" ]]; then
+                echo "CI run $run_id passed."
+                break
+              fi
+              echo "CI run $run_id did not pass. Conclusion: ${conclusion:-unknown}" >&2
+              exit 1
+            fi
+
+            echo "CI run $run_id is $status (attempt $attempt/80); waiting 15 seconds."
+            sleep 15
+          done
+
+          if [[ -z "${run_id:-}" || "${status:-}" != "completed" || "${conclusion:-}" != "success" ]]; then
+            echo "Timed out waiting for successful CI on $verification_sha." >&2
             exit 1
           fi
 
