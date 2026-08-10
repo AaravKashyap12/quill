@@ -1,4 +1,4 @@
-use crate::asr::{AsrPass, WhisperServer};
+use crate::asr::AsrPass;
 use crate::audio::{AudioCapture, AudioSnapshot};
 use crate::cleanup;
 use crate::dictionary;
@@ -9,10 +9,14 @@ use crate::injection;
 use crate::metrics;
 #[cfg(windows)]
 use crate::model::ComputeBackend;
-use crate::model::{AppSettings, HotkeyBehavior, HotkeyConfig, InjectionMode, Mode};
+use crate::model::{
+    AppSettings, CleanupProvider, HotkeyBehavior, HotkeyConfig, InjectionMode, Mode,
+    TranscriptionProvider,
+};
 use crate::recovery;
 use crate::register::Register;
 use crate::streaming::{LocalAgreement, TimedWord};
+use crate::transcription::TranscriptionRuntime;
 use anyhow::{anyhow, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
@@ -208,22 +212,29 @@ async fn run(
     control: Arc<SessionControl>,
 ) -> Result<()> {
     let startup_settings = read_settings(&shared_settings)?;
-    emit_status(&app, "processing", None, "Loading whisper.cpp", None);
-    let mut server = WhisperServer::start(&app, &startup_settings).await?;
+    emit_status(
+        &app,
+        "processing",
+        None,
+        "Preparing speech recognition",
+        None,
+    );
+    let mut runtime = TranscriptionRuntime::start(&app, &startup_settings).await?;
     metrics::record(
         "whisperColdLoad",
-        server.cold_load_ms,
+        runtime.cold_load_ms(),
         None,
-        Some(server.backend_name()),
+        Some(runtime.backend_name()),
     )?;
     // Snapshot the engine-affecting settings the running server was booted
     // with, so we can detect drift each loop iteration and hot-swap the
     // server when the user changes model or compute backend.
     let mut loaded_model = startup_settings.whisper_model.clone();
     let mut loaded_backend = startup_settings.backend;
+    let mut loaded_provider = startup_settings.transcription_provider;
     #[cfg(windows)]
     let mut loaded_cuda_generation = downloads::cuda_runtime_generation(&app);
-    emit_status(&app, "ready", None, server.ready_message(), None);
+    emit_status(&app, "ready", None, runtime.ready_message(), None);
     // Install the native listener before accepting any shortcut. Its event
     // queue stays responsive even while this async loop awaits Whisper.
     let mut hotkey_monitor = hotkeys::HotkeyMonitor::start()?;
@@ -235,7 +246,7 @@ async fn run(
 
     loop {
         if control.stop_requested() {
-            server.shutdown().await?;
+            runtime.shutdown().await?;
             return Ok(());
         }
         let settings = read_settings(&shared_settings)?;
@@ -250,33 +261,38 @@ async fn run(
         #[cfg(windows)]
         let cuda_generation = downloads::cuda_runtime_generation(&app);
         #[cfg(windows)]
-        let cuda_pack_changed = matches!(
-            settings.backend,
-            ComputeBackend::Auto | ComputeBackend::Cuda
-        ) && cuda_generation != loaded_cuda_generation;
+        let cuda_pack_changed = settings.transcription_provider
+            == crate::model::TranscriptionProvider::Local
+            && matches!(
+                settings.backend,
+                ComputeBackend::Auto | ComputeBackend::Cuda
+            )
+            && cuda_generation != loaded_cuda_generation;
         #[cfg(not(windows))]
         let cuda_pack_changed = false;
         if active.is_none()
             && (settings.whisper_model != loaded_model
                 || settings.backend != loaded_backend
+                || settings.transcription_provider != loaded_provider
                 || cuda_pack_changed)
         {
             emit_status(
                 &app,
                 "processing",
                 None,
-                &format!("Reloading whisper.cpp with {}", settings.whisper_model),
+                "Switching speech recognition provider",
                 None,
             );
-            server.shutdown().await?;
-            server = WhisperServer::start(&app, &settings).await?;
+            runtime.shutdown().await?;
+            runtime = TranscriptionRuntime::start(&app, &settings).await?;
             loaded_model = settings.whisper_model.clone();
             loaded_backend = settings.backend;
+            loaded_provider = settings.transcription_provider;
             #[cfg(windows)]
             {
                 loaded_cuda_generation = cuda_generation;
             }
-            emit_status(&app, "ready", None, server.ready_message(), None);
+            emit_status(&app, "ready", None, runtime.ready_message(), None);
         }
 
         // Text that could not be safely delivered while its editor was in
@@ -331,7 +347,7 @@ async fn run(
         if desired_mode != current_mode {
             let mut carried_target = None;
             if let Some(mut session) = active.take() {
-                session.finish(&server, &app).await?;
+                session.finish(&runtime, &app).await?;
                 carried_target = Some(session.target.clone());
                 if let Some(deferred) = session.take_deferred_insertion() {
                     deferred_insertions.push(deferred);
@@ -367,7 +383,7 @@ async fn run(
                 if snapshot.duration_ms >= MIN_AUDIO_MS
                     && snapshot.duration_ms >= session.last_audio_ms + PASS_INTERVAL_MS / 2
                 {
-                    session.process_pass(&server, &app, snapshot).await?;
+                    session.process_pass(&runtime, &app, snapshot).await?;
                 }
             }
         }
@@ -508,7 +524,7 @@ impl ActiveSession {
 
     async fn process_pass(
         &mut self,
-        server: &WhisperServer,
+        runtime: &TranscriptionRuntime,
         app: &AppHandle,
         snapshot: AudioSnapshot,
     ) -> Result<()> {
@@ -524,14 +540,47 @@ impl ActiveSession {
         if peak < 0.002 {
             return Ok(());
         }
+        if !runtime.supports_rolling() {
+            // Cloud transcription is deliberately final-on-release. Repeatedly
+            // uploading the cumulative buffer every 700 ms would consume quota
+            // quadratically. Keep recovery audio warm, but make no network call.
+            let _ = recovery::write_transcript(
+                &self.recovery_id,
+                self.mode,
+                &self.transcript,
+                self.settings.keep_recovery_audio,
+            );
+            if self.settings.keep_recovery_audio {
+                let due = self
+                    .last_audio_checkpoint
+                    .map(|last| last.elapsed().as_millis() as u64 >= AUDIO_CHECKPOINT_INTERVAL_MS)
+                    .unwrap_or(true);
+                if due {
+                    recovery::write_audio_async(self.recovery_id.clone(), snapshot.samples);
+                    self.last_audio_checkpoint = Some(Instant::now());
+                }
+            } else {
+                recovery::purge_audio_if_disabled(false);
+            }
+            emit_status(
+                app,
+                "listening",
+                Some(self.mode),
+                "Listening — Groq transcribes after release",
+                Some("Groq Cloud"),
+            );
+            return Ok(());
+        }
         emit_status(
             app,
             "processing",
             Some(self.mode),
-            server.activity_message(),
+            runtime.activity_message(),
             (self.mode == Mode::Scribe).then_some(self.settings.cleanup_base_url.as_str()),
         );
-        let pass = server.transcribe(&self.settings, &snapshot.samples).await?;
+        let pass = runtime
+            .transcribe(&self.settings, &snapshot.samples, mode_name(self.mode))
+            .await?;
         // Expand literal dictionary entries before Dictation and Scribe
         // diverge. Rebuilding the timed words here also lets LocalAgreement
         // stabilize the expanded form instead of injecting the spoken trigger.
@@ -590,7 +639,8 @@ impl ActiveSession {
         Ok(())
     }
 
-    async fn finish(&mut self, server: &WhisperServer, app: &AppHandle) -> Result<()> {
+    async fn finish(&mut self, runtime: &TranscriptionRuntime, app: &AppHandle) -> Result<()> {
+        let released_at = Instant::now();
         // Keep the same native surface mounted while speech becomes text. The
         // frontend collapses the live waveform, shows the relevant processing
         // geometry, then dismisses the window after completion feedback.
@@ -609,10 +659,70 @@ impl ActiveSession {
             (self.mode == Mode::Scribe).then_some(self.settings.cleanup_base_url.as_str()),
         );
         let snapshot = self.audio.snapshot()?;
+        let audio_bucket = metrics::audio_duration_bucket(snapshot.duration_ms);
         if snapshot.duration_ms >= 250 && audio_peak(&snapshot) >= 0.002 {
-            let pass = match server.transcribe(&self.settings, &snapshot.samples).await {
+            if !runtime.supports_rolling() && self.settings.keep_recovery_audio {
+                // Dispatch the final snapshot before the request so a timeout,
+                // quota failure, or provider outage never destroys the audio.
+                let _ = recovery::write_transcript(
+                    &self.recovery_id,
+                    self.mode,
+                    &self.transcript,
+                    true,
+                );
+                recovery::write_audio_async(self.recovery_id.clone(), snapshot.samples.clone());
+            }
+            emit_status(
+                app,
+                "processing",
+                Some(self.mode),
+                runtime.activity_message(),
+                (!runtime.supports_rolling()).then_some("Groq Cloud"),
+            );
+            if !runtime.supports_rolling() {
+                emit_voice_pill(
+                    app,
+                    "transcribing",
+                    Some(self.mode),
+                    Some("Transcribing with Groq"),
+                    None,
+                );
+            }
+            let pass = match runtime
+                .transcribe(&self.settings, &snapshot.samples, mode_name(self.mode))
+                .await
+            {
                 Ok(pass) => pass,
                 Err(error) => {
+                    if !runtime.supports_rolling() {
+                        record_cloud_session_stage(
+                            "releaseToTranscriptMs",
+                            released_at.elapsed().as_millis(),
+                            "groq",
+                            mode_name(self.mode),
+                            cloud_error_outcome(&error),
+                            Some(audio_bucket),
+                        );
+                        // Cloud failure is the exceptional case where recovery
+                        // audio is retained even when routine audio checkpoints
+                        // are disabled: there is no transcript to recover from.
+                        let _ = recovery::write_transcript(
+                            &self.recovery_id,
+                            self.mode,
+                            &self.transcript,
+                            true,
+                        );
+                        let _ = recovery::write_audio_now(&self.recovery_id, &snapshot.samples);
+                        // Rewrite after the synchronous WAV commit so the
+                        // manifest's audioPath cannot lag behind the file.
+                        let _ = recovery::write_transcript(
+                            &self.recovery_id,
+                            self.mode,
+                            &self.transcript,
+                            true,
+                        );
+                        let _ = recovery::mark_provider_failure(&self.recovery_id, "Groq");
+                    }
                     if self.mode == Mode::Scribe {
                         crate::review::hide_processing(app);
                     }
@@ -628,10 +738,23 @@ impl ActiveSession {
             )?;
             self.transcript = pass.text.clone();
             self.last_hypothesis = pass.words.clone();
+            if !runtime.supports_rolling() {
+                record_cloud_session_stage(
+                    "releaseToTranscriptMs",
+                    released_at.elapsed().as_millis(),
+                    "groq",
+                    mode_name(self.mode),
+                    "success",
+                    Some(audio_bucket),
+                );
+            }
             match self.mode {
                 Mode::Dictation => self.commit_dictation(pass, true, app)?,
                 Mode::Scribe => {
-                    if let Err(error) = self.commit_scribe(pass, app).await {
+                    if let Err(error) = self
+                        .commit_scribe(pass, app, released_at, audio_bucket)
+                        .await
+                    {
                         crate::review::hide_processing(app);
                         return Err(error);
                     }
@@ -705,24 +828,52 @@ impl ActiveSession {
         self.inject_words(&committed, "dictationWordCommit", app)
     }
 
-    async fn commit_scribe(&mut self, pass: AsrPass, app: &AppHandle) -> Result<()> {
+    async fn commit_scribe(
+        &mut self,
+        pass: AsrPass,
+        app: &AppHandle,
+        released_at: Instant,
+        audio_bucket: &'static str,
+    ) -> Result<()> {
         if !pass.words.is_empty() {
             let source_words = &pass.words;
             let source = render_words(source_words);
             let detected_register = crate::register::resolve(&self.target);
             let register =
                 resolve_scribe_register(detected_register, self.settings.default_register);
-            crate::review::update_processing(app, "Resolving spoken corrections");
+            let uses_gemini = self.settings.cleanup_provider == CleanupProvider::Gemini;
+            crate::review::update_processing(
+                app,
+                if uses_gemini {
+                    "Refining with Gemini"
+                } else {
+                    "Resolving spoken corrections"
+                },
+            );
             emit_voice_pill(
                 app,
-                "generating",
+                if uses_gemini {
+                    "refining"
+                } else {
+                    "generating"
+                },
                 Some(Mode::Scribe),
-                Some("Composing your Scribe draft"),
+                Some(if uses_gemini {
+                    "Refining with Gemini"
+                } else {
+                    "Composing your Scribe draft"
+                }),
                 None,
             );
             let cleanup_started = Instant::now();
-            let (cleaned, warning) = match cleanup::clean(&self.settings, &source, register).await {
-                Ok(cleaned) => (cleaned, None),
+            let (cleaned, warning, cleanup_outcome) = match cleanup::clean(
+                &self.settings,
+                &source,
+                register,
+            )
+            .await
+            {
+                Ok(cleaned) => (cleaned, None, "success"),
                 Err(error) => {
                     // Log only the error class and source-length. The source
                     // string is user speech and must never be persisted.
@@ -744,8 +895,9 @@ impl ActiveSession {
                     (
                         cleanup::safe_fallback(&source),
                         Some(format!(
-                            "Local cleanup was unavailable, so Quill preserved a safe draft: {error}"
+                            "Scribe cleanup was unavailable, so Quill preserved a safe local draft: {error}"
                         )),
+                        cloud_error_outcome(&error),
                     )
                 }
             };
@@ -769,6 +921,16 @@ impl ActiveSession {
                 },
             )?;
             self.review_opened = true;
+            if let Some(provider) = cloud_path_name(&self.settings) {
+                record_cloud_session_stage(
+                    "releaseToReviewMs",
+                    released_at.elapsed().as_millis(),
+                    provider,
+                    "scribe",
+                    cleanup_outcome,
+                    Some(audio_bucket),
+                );
+            }
             metrics::record(
                 "scribeReviewReady",
                 cleanup_started.elapsed().as_millis(),
@@ -1163,6 +1325,46 @@ fn mode_name(mode: Mode) -> &'static str {
     }
 }
 
+fn cloud_path_name(settings: &AppSettings) -> Option<&'static str> {
+    match (settings.transcription_provider, settings.cleanup_provider) {
+        (TranscriptionProvider::Groq, CleanupProvider::Gemini) => Some("groq+gemini"),
+        (TranscriptionProvider::Groq, _) => Some("groq"),
+        (_, CleanupProvider::Gemini) => Some("gemini"),
+        _ => None,
+    }
+}
+
+fn cloud_error_outcome(error: &anyhow::Error) -> &'static str {
+    let message = error.to_string().to_ascii_lowercase();
+    if message.contains("timed out") || message.contains("taking too long") {
+        "timeout"
+    } else if message.contains("quota") || message.contains("429") {
+        "quota"
+    } else if message.contains("could not be reached")
+        || message.contains("connection")
+        || message.contains("before a response")
+    {
+        "transportFailure"
+    } else {
+        "providerFailure"
+    }
+}
+
+fn record_cloud_session_stage(
+    metric: &str,
+    value_ms: u128,
+    provider: &str,
+    mode: &str,
+    outcome: &str,
+    audio_bucket: Option<&str>,
+) {
+    if let Err(error) =
+        metrics::record_cloud_stage(metric, value_ms, provider, mode, outcome, audio_bucket)
+    {
+        tracing::warn!(%error, metric, "could not record cloud latency metric");
+    }
+}
+
 fn emit_status(
     app: &AppHandle,
     state: &str,
@@ -1310,6 +1512,38 @@ mod tests {
         assert_eq!(
             resolve_scribe_register(Register::Generic, Register::Generic),
             Register::Generic
+        );
+    }
+
+    #[test]
+    fn cloud_path_metric_dimension_describes_only_selected_providers() {
+        let mut settings = AppSettings::default();
+        assert_eq!(cloud_path_name(&settings), None);
+
+        settings.transcription_provider = TranscriptionProvider::Groq;
+        assert_eq!(cloud_path_name(&settings), Some("groq"));
+
+        settings.cleanup_provider = CleanupProvider::Gemini;
+        assert_eq!(cloud_path_name(&settings), Some("groq+gemini"));
+
+        settings.transcription_provider = TranscriptionProvider::Local;
+        assert_eq!(cloud_path_name(&settings), Some("gemini"));
+    }
+
+    #[test]
+    fn cloud_failure_metrics_use_coarse_outcomes_only() {
+        assert_eq!(
+            cloud_error_outcome(&anyhow!("provider timed out")),
+            "timeout"
+        );
+        assert_eq!(cloud_error_outcome(&anyhow!("quota exhausted")), "quota");
+        assert_eq!(
+            cloud_error_outcome(&anyhow!("could not be reached")),
+            "transportFailure"
+        );
+        assert_eq!(
+            cloud_error_outcome(&anyhow!("malformed response")),
+            "providerFailure"
         );
     }
 

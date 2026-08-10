@@ -10,7 +10,7 @@ web
 
 ## Users
 
-Quill is for privacy-conscious writers, developers, researchers, and knowledge workers who spend much of their day typing and want voice input without sending speech to a cloud service. The primary workflow happens inside another application: the user holds or locks one of two global hotkeys, speaks, and expects text to appear at the active cursor.
+Quill is for privacy-conscious writers, developers, researchers, and knowledge workers who spend much of their day typing. It is local by default and also offers explicit cloud providers for people whose hardware or workflow benefits from them. The primary workflow happens inside another application: the user holds or locks one of two global hotkeys, speaks, and expects text to appear at the active cursor.
 
 ## Product Purpose
 

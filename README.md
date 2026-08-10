@@ -1,6 +1,6 @@
 # Quill
 
-**Two hotkeys. Two kinds of voice input. Everything stays local.**
+**Two hotkeys. Two kinds of voice input. Local by default, cloud only when you choose it.**
 
 Quill is a free, open-source voice dictation app for Windows. macOS platform
 hooks and build scaffolding are included, but speech recognition is still wired
@@ -62,7 +62,7 @@ holds the complete utterance until the user releases or unlocks its shortcut,
 then resolves corrections once before any text reaches the cursor.
 
 Scribe detects whether the captured target is email, chat, an AI prompt, notes,
-or general text and sends the raw transcript to your local LLM with the matching
+or general text and sends the raw transcript to your selected cleanup provider with the matching
 "polish, don't invent" instructions. Email may gain a greeting and sign-off;
 other registers do not. Every register forbids new facts, commitments, offers,
 or constraints, and the detected writing style can be changed in the review
@@ -167,7 +167,8 @@ scripts/
 | Desktop shell | Tauri v2 + React + TypeScript | One UI and command surface; Windows is verified and macOS remains incomplete |
 | Recognition | whisper.cpp | CPU runtime bundled on Windows; CUDA is an optional verified download; macOS Metal packaging is not yet wired into the app runtime |
 | Live commit | Rolling re-transcription + LocalAgreement | Low perceived latency without flickering unstable words |
-| Scribe cleanup | Ollama or OpenAI-compatible localhost server | Model choice stays with the user and speech stays local |
+| Speech recognition | Local whisper.cpp or explicit Groq Cloud | Local types live; Groq inserts after release |
+| Scribe cleanup | Ollama, OpenAI-compatible localhost, Gemini, or disabled | Every draft still passes the same guards and review window |
 | Windows hotkeys | `GetAsyncKeyState` polling | No system-wide keyboard hook |
 | Windows insertion | `SendInput` or clipboard paste | Unicode support and reliable long-text insertion |
 | macOS hotkeys | `CGEventSourceKeyState` polling | Global state without an event tap keyboard hook |
@@ -282,3 +283,9 @@ issues should follow [SECURITY.md](SECURITY.md).
 ## License
 
 [GNU AGPL-3.0-or-later](LICENSE)
+Cloud processing is always opt-in. Groq transcription uses
+`whisper-large-v3-turbo` and uploads the completed recording only after the
+shortcut is released; it does not type live. Gemini Scribe uses
+`gemini-3.1-flash-lite` and receives transcript text, never audio. API keys are
+stored in Windows Credential Manager or macOS Keychain rather than in Quill's
+settings file. Adding a key never changes the active provider.

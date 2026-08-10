@@ -66,6 +66,8 @@ pub struct AppSettings {
     pub whisper_model: String,
     pub backend: ComputeBackend,
     pub language: String,
+    #[serde(default)]
+    pub transcription_provider: TranscriptionProvider,
     #[serde(default = "generic_register")]
     pub default_register: Register,
     pub cleanup_provider: CleanupProvider,
@@ -122,6 +124,7 @@ impl Default for AppSettings {
             whisper_model: "base.en".into(),
             backend: ComputeBackend::Auto,
             language: "en".into(),
+            transcription_provider: TranscriptionProvider::Local,
             default_register: Register::Generic,
             cleanup_provider: CleanupProvider::Auto,
             cleanup_model: String::new(),
@@ -198,7 +201,16 @@ pub enum CleanupProvider {
     Auto,
     Ollama,
     OpenaiCompatible,
+    Gemini,
     Disabled,
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TranscriptionProvider {
+    #[default]
+    Local,
+    Groq,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -255,6 +267,10 @@ mod tests {
         value
             .as_object_mut()
             .unwrap()
+            .remove("transcriptionProvider");
+        value
+            .as_object_mut()
+            .unwrap()
             .remove("speechModelSetupAttempted");
         value
             .as_object_mut()
@@ -265,6 +281,10 @@ mod tests {
         assert!(restored.dictionary.is_empty());
         assert!(restored.dismissed_suggestions.is_empty());
         assert_eq!(restored.default_register, Register::Generic);
+        assert_eq!(
+            restored.transcription_provider,
+            TranscriptionProvider::Local
+        );
         assert!(!restored.speech_model_setup_attempted);
         assert!(!restored.scribe_setup_dismissed);
         assert!(!restored.onboarding_completed);

@@ -640,6 +640,22 @@ button:disabled {
   margin-top: 28px;
 }
 
+.onboarding-route-choice {
+  display: grid;
+  width: min(470px, 100%);
+  margin-top: 28px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 16px;
+}
+
+.onboarding-route-choice span {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
 .onboarding-panel .primary-button,
 .onboarding-panel .ghost-action {
   display: inline-flex;
@@ -908,6 +924,19 @@ button:disabled {
 
   .onboarding-options small {
     white-space: normal;
+  }
+
+  .onboarding-route-choice {
+    grid-template-columns: 1fr;
+  }
+
+  .onboarding-route-choice .primary-button,
+  .onboarding-route-choice .ghost-action {
+    width: 100%;
+  }
+
+  .onboarding-route-choice span + button {
+    margin-top: 8px;
   }
 }
 
@@ -1715,7 +1744,8 @@ button:disabled {
 .setting-control select,
 .compose-row input,
 .compose-row select,
-.search-input {
+.search-input,
+.cloud-key-control input {
   height: 36px;
   padding: 0 12px;
   border: 1px solid var(--line-strong);
@@ -1755,7 +1785,8 @@ button:disabled {
 .setting-control select:hover,
 .compose-row input:hover,
 .compose-row select:hover,
-.search-input:hover {
+.search-input:hover,
+.cloud-key-control input:hover {
   border-color: rgba(30, 35, 31, 0.30);
   background-color: #ffffff;
 }
@@ -1763,9 +1794,18 @@ button:disabled {
 .setting-control select:focus,
 .compose-row input:focus,
 .compose-row select:focus,
-.search-input:focus {
+.search-input:focus,
+.cloud-key-control input:focus {
   border-color: var(--green);
   box-shadow: 0 0 0 3px var(--green-ring);
+}
+
+.cloud-key-control input::placeholder {
+  color: var(--text-muted);
+}
+
+.cloud-key-control input[aria-invalid="true"] {
+  border-color: rgba(156, 66, 56, 0.62);
 }
 
 /* Disabled: structurally present, clearly inactive. Never a faint ghost. */
@@ -1868,6 +1908,132 @@ button:disabled {
 
 .inline-control select {
   width: 178px;
+}
+
+.voice-data-path {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(650px, 100%);
+  margin: 17px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.voice-data-path div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.voice-data-path dt {
+  color: var(--ink-900);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.voice-data-path dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.voice-data-path > span {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.cloud-key-control {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: min(100%, 470px);
+}
+
+.cloud-key-control input {
+  width: 100%;
+  min-width: 0;
+}
+
+.cloud-key-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.cloud-key-status {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 1px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.cloud-key-status > span {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.cloud-key-status.is-success {
+  color: var(--success);
+}
+
+.cloud-key-status.is-success > span {
+  background: var(--success);
+}
+
+.cloud-key-status.is-error {
+  color: var(--danger);
+}
+
+.cloud-key-status.is-error > span {
+  background: var(--danger);
+}
+
+.cloud-key-status.is-checking > span {
+  background: var(--green);
+  animation: cloud-status-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes cloud-status-pulse {
+  50% { opacity: 0.35; }
+}
+
+.link-button.is-danger {
+  color: var(--danger);
+}
+
+.link-button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.recovery-banner__retry {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 13px;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+}
+
+.recovery-banner__retry span {
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 .icon-button {
@@ -3154,10 +3320,8 @@ button:disabled {
   padding: 16px 18px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.5));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    0 12px 28px -20px rgba(40, 40, 45, 0.22);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--shadow-sheet);
   animation: recovery-in 260ms var(--ease-spring) both;
 }
 
@@ -3205,6 +3369,7 @@ button:disabled {
   font-size: 13.5px;
   font-weight: 600;
   letter-spacing: -0.008em;
+  text-wrap: pretty;
 }
 
 .recovery-banner__meta span {
@@ -3462,6 +3627,14 @@ button:disabled {
   transform: scale(0.96);
 }
 
+.row-download-button:disabled {
+  border-color: var(--line-strong);
+  background: rgba(30, 35, 31, 0.06);
+  color: var(--text-dim);
+  box-shadow: none;
+  transform: none;
+}
+
 /* Small trash icon-only button for row-level delete */
 .icon-only-button {
   display: inline-grid;
@@ -3487,6 +3660,9 @@ button:disabled {
 
 /* Text-only "Cancel" link */
 .link-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -3860,6 +4036,24 @@ button:disabled {
     border-top: 1px solid var(--line);
     border-left: 0;
   }
+
+  .voice-data-path {
+    align-items: flex-start;
+  }
+
+  .voice-data-path div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .cloud-key-control {
+    width: min(340px, 100%);
+  }
+
+  .recovery-banner {
+    margin-inline: 22px;
+  }
 }
 
 @media (max-width: 680px) {
@@ -3930,6 +4124,28 @@ button:disabled {
 
   .inline-control select {
     flex: 1;
+  }
+
+  .voice-data-path {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .voice-data-path > span {
+    display: none;
+  }
+
+  .cloud-key-control {
+    width: 100%;
+  }
+
+  .recovery-banner {
+    margin: 16px 15px 0;
+  }
+
+  .recovery-banner__actions {
+    width: 100%;
   }
 
   .compose-row {
@@ -4523,6 +4739,42 @@ button:disabled {
   color: #cba59e;
   font-size: 10px;
   font-weight: 620;
+}
+
+.voice-pill__compact.has-stage-copy .voice-morph {
+  opacity: 0.08;
+}
+
+.voice-pill__processing-copy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  overflow: hidden;
+  color: rgba(247, 244, 237, 0.9);
+  font-size: 11px;
+  font-weight: 540;
+  letter-spacing: 0.005em;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-pill__processing-copy i {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 50%;
+  background: var(--pill-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pill-accent) 14%, transparent);
+  animation: voice-stage-pulse 1.15s ease-in-out infinite;
+}
+
+@keyframes voice-stage-pulse {
+  0%, 100% { opacity: 0.42; transform: scale(0.82); }
+  50% { opacity: 1; transform: scale(1); }
 }
 
 .voice-pill__composer-content {

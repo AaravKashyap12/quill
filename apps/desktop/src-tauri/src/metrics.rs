@@ -29,6 +29,19 @@ pub struct CountMetricEvent<'a> {
     pub detail: Option<&'a str>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudLatencyMetricEvent<'a> {
+    pub timestamp_unix_ms: u128,
+    pub metric: &'a str,
+    pub value_ms: u128,
+    pub provider: &'a str,
+    pub mode: &'a str,
+    pub outcome: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_duration_bucket: Option<&'a str>,
+}
+
 pub fn record(
     metric: &str,
     value_ms: u128,
@@ -54,6 +67,35 @@ pub fn increment(metric: &str, mode: Option<&str>, detail: Option<&str>) -> Resu
         detail,
     };
     append(&event)
+}
+
+pub fn record_cloud_stage(
+    metric: &str,
+    value_ms: u128,
+    provider: &str,
+    mode: &str,
+    outcome: &str,
+    audio_duration_bucket: Option<&str>,
+) -> Result<()> {
+    let event = CloudLatencyMetricEvent {
+        timestamp_unix_ms: timestamp_unix_ms(),
+        metric,
+        value_ms,
+        provider,
+        mode,
+        outcome,
+        audio_duration_bucket,
+    };
+    append(&event)
+}
+
+pub fn audio_duration_bucket(duration_ms: u64) -> &'static str {
+    match duration_ms {
+        0..5_000 => "under5s",
+        5_000..30_000 => "5to30s",
+        30_000..120_000 => "30to120s",
+        _ => "over120s",
+    }
 }
 
 fn timestamp_unix_ms() -> u128 {
@@ -102,5 +144,32 @@ mod tests {
         let value = serde_json::to_value(event).unwrap();
         assert_eq!(value["count"], 1);
         assert!(value.get("valueMs").is_none());
+    }
+
+    #[test]
+    fn cloud_latency_metrics_have_only_broad_content_free_dimensions() {
+        let event = CloudLatencyMetricEvent {
+            timestamp_unix_ms: 123,
+            metric: "groqRequestMs",
+            value_ms: 456,
+            provider: "groq",
+            mode: "scribe",
+            outcome: "success",
+            audio_duration_bucket: Some("5to30s"),
+        };
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(value["provider"], "groq");
+        assert_eq!(value["audioDurationBucket"], "5to30s");
+        assert!(value.get("detail").is_none());
+        assert!(value.get("text").is_none());
+        assert!(value.get("path").is_none());
+    }
+
+    #[test]
+    fn audio_duration_buckets_match_the_benchmark_ranges() {
+        assert_eq!(audio_duration_bucket(4_999), "under5s");
+        assert_eq!(audio_duration_bucket(5_000), "5to30s");
+        assert_eq!(audio_duration_bucket(30_000), "30to120s");
+        assert_eq!(audio_duration_bucket(120_000), "over120s");
     }
 }

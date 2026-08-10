@@ -64,6 +64,11 @@ pub struct RecoveryManifest {
     pub updated_at_unix_ms: u128,
     pub mode: String,
     pub transcript: String,
+    /// Cloud provider whose request failed, if this checkpoint exists because
+    /// a cloud transcription produced no result. Contains only a provider
+    /// label, never response content.
+    #[serde(default)]
+    pub failed_provider: Option<String>,
     /// Path to the raw audio WAV, present only when the user had
     /// `keepRecoveryAudio` enabled at the time of the checkpoint.
     pub audio_path: Option<String>,
@@ -142,6 +147,7 @@ fn write_transcript_in(
             .as_millis(),
         mode: mode_str(mode).to_owned(),
         transcript: transcript.to_owned(),
+        failed_provider: None,
         audio_path: audio,
     };
     let pending = dir.join(format!("{MANIFEST_NAME}.pending"));
@@ -150,6 +156,50 @@ fn write_transcript_in(
         .context("failed to write recovery checkpoint")?;
     fs::rename(pending, committed).context("failed to commit recovery checkpoint")?;
     Ok(())
+}
+
+pub fn mark_provider_failure(id: &str, provider: &str) -> Result<()> {
+    let dir = recovery_directory()?;
+    let _guard = RECOVERY_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(mut manifest) = load_pending_in(&dir)? else {
+        return Ok(());
+    };
+    if manifest.id != id {
+        return Ok(());
+    }
+    manifest.failed_provider = Some(provider.to_owned());
+    let pending = dir.join(format!("{MANIFEST_NAME}.pending"));
+    fs::write(&pending, serde_json::to_vec_pretty(&manifest)?)
+        .context("failed to mark the recovery provider failure")?;
+    fs::rename(pending, dir.join(MANIFEST_NAME))
+        .context("failed to commit the recovery provider failure")?;
+    Ok(())
+}
+
+pub fn load_audio_samples(id: &str) -> Result<Vec<f32>> {
+    let dir = recovery_directory()?;
+    let _guard = RECOVERY_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let manifest = load_pending_in(&dir)?.context("No recovery checkpoint is available")?;
+    if manifest.id != id {
+        anyhow::bail!("A newer recording replaced this recovery checkpoint");
+    }
+    let audio = dir.join(AUDIO_NAME);
+    if !audio.exists() {
+        anyhow::bail!("This recovery checkpoint does not contain audio");
+    }
+    let mut reader = hound::WavReader::open(audio).context("Could not open the recovery audio")?;
+    reader
+        .samples::<i16>()
+        .map(|sample| {
+            sample
+                .map(|value| value as f32 / i16::MAX as f32)
+                .context("Could not decode the recovery audio")
+        })
+        .collect()
 }
 
 /// Persist the raw audio buffer to `latest.wav`. Only called when
@@ -183,6 +233,25 @@ pub fn write_audio_async(recovery_id: String, samples: Vec<f32>) {
         Err(_) => return,
     };
     let _ = dispatch_audio_write(dir, recovery_id, samples);
+}
+
+/// Failure-path write used when a cloud provider returned no transcript.
+/// Unlike routine checkpoints this intentionally blocks until the WAV is
+/// durable, because the error UI must not race the only recoverable artefact.
+pub fn write_audio_now(recovery_id: &str, samples: &[f32]) -> Result<()> {
+    invalidate_pending_audio_writes();
+    let dir = recovery_directory()?;
+    let _guard = RECOVERY_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let manifest = load_pending_in(&dir)?.context("No recovery checkpoint is available")?;
+    if manifest.id != recovery_id {
+        anyhow::bail!("A newer recording replaced this recovery checkpoint");
+    }
+    ensure_dir(&dir)?;
+    let pending = dir.join(format!("{AUDIO_NAME}.pending"));
+    fs::write(&pending, pcm16_wav(samples)).context("failed to write recovery audio")?;
+    fs::rename(pending, dir.join(AUDIO_NAME)).context("failed to commit recovery audio")
 }
 
 fn dispatch_audio_write(dir: PathBuf, recovery_id: String, samples: Vec<f32>) -> JoinHandle<()> {

@@ -43,6 +43,7 @@ const PROCESSING_PHASES: VoicePillPhase[] = [
   "transcribing",
   "processing",
   "refining",
+  "generating",
 ];
 
 function phaseLabel(phase: VoicePillPhase, mode: Mode, message?: string | null) {
@@ -197,9 +198,13 @@ export function RecordingOverlay({
   const expanded = composerVisible;
   const completed = phase === "complete" || phase === "collapsing";
   const showStatusBadge = completed || phase === "error";
+  const stageMessage = isProcessing ? message || phaseLabel(phase, mode, message) : null;
   const resolvedPreview = previewText(preview);
   const successWidth = Math.min(230, Math.max(90, 58 + resolvedPreview.length * 5.8));
-  const compactWidth = phase === "error" ? 230 : completed ? successWidth : 134;
+  const processingWidth = stageMessage
+    ? Math.min(230, Math.max(168, 42 + stageMessage.length * 5.8))
+    : 134;
+  const compactWidth = phase === "error" ? 230 : completed ? successWidth : processingWidth;
   const surfaceTransition = reducedMotion
     ? { duration: 0 }
     : { duration: expanded ? 0.42 : 0.3, ease: [0.22, 1, 0.36, 1] as const };
@@ -249,7 +254,7 @@ export function RecordingOverlay({
           ) : (
             <motion.div
               key="compact"
-              className={`voice-pill__compact${showStatusBadge ? " has-status-badge" : ""}`}
+              className={`voice-pill__compact${showStatusBadge ? " has-status-badge" : ""}${stageMessage ? " has-stage-copy" : ""}`}
               initial={reducedMotion ? false : { opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -307,6 +312,18 @@ export function RecordingOverlay({
                       animate={{ opacity: 1, y: 0 }}
                     >
                       {message || "Couldn't process audio"}<small>Retry</small>
+                    </motion.span>
+                  ) : stageMessage ? (
+                    <motion.span
+                      key={`stage-${phase}`}
+                      className="voice-pill__processing-copy"
+                      initial={reducedMotion ? false : { opacity: 0, y: 2 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -2 }}
+                      transition={{ duration: reducedMotion ? 0 : 0.18 }}
+                    >
+                      <i aria-hidden="true" />
+                      {stageMessage}
                     </motion.span>
                   ) : null}
                 </AnimatePresence>

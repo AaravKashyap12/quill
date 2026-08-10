@@ -18,6 +18,7 @@ export const defaultSettings: AppSettings = {
   whisperModel: "base.en",
   backend: "auto",
   language: "en",
+  transcriptionProvider: "local",
   defaultRegister: "generic",
   cleanupProvider: "auto",
   cleanupModel: "",

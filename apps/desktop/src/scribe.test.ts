@@ -29,4 +29,28 @@ describe("Scribe model readiness", () => {
       ),
     ).toBe(false);
   });
+
+  it("accepts an explicitly selected configured Gemini provider", () => {
+    expect(
+      isScribeReady(
+        { cleanupModel: "", cleanupProvider: "gemini" },
+        [],
+        [{ provider: "gemini", configured: true, status: "connected", message: null }],
+      ),
+    ).toBe(true);
+  });
+
+  it("does not enable Gemini merely because it is selected", () => {
+    expect(isScribeReady({ cleanupModel: "", cleanupProvider: "gemini" }, [], [])).toBe(false);
+  });
+
+  it("requires a successful Gemini connection check", () => {
+    expect(
+      isScribeReady(
+        { cleanupModel: "", cleanupProvider: "gemini" },
+        [],
+        [{ provider: "gemini", configured: true, status: "configured", message: null }],
+      ),
+    ).toBe(false);
+  });
 });

@@ -2,6 +2,7 @@ mod app_updates;
 mod asr;
 mod audio;
 mod cleanup;
+mod credentials;
 mod dictionary;
 mod downloads;
 mod hotkeys;
@@ -16,6 +17,7 @@ mod session;
 mod settings;
 mod streaming;
 mod system_profile;
+mod transcription;
 
 use crate::model::{AppSettings, Mode, ProviderStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -184,6 +186,42 @@ fn discard_recovery(id: String) -> Result<(), String> {
                 .to_owned(),
         ),
     }
+}
+
+#[tauri::command]
+async fn retry_recovery_transcription(
+    app: AppHandle,
+    state: State<'_, QuillState>,
+    id: String,
+    provider: String,
+) -> Result<recovery::RecoveryManifest, String> {
+    let pending = recovery::load_pending()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "No recovery checkpoint is available".to_owned())?;
+    if pending.id != id {
+        return Err("A newer recording replaced this recovery checkpoint".to_owned());
+    }
+    let samples = recovery::load_audio_samples(&id).map_err(|error| error.to_string())?;
+    let settings = state
+        .settings
+        .read()
+        .map(|settings| settings.clone())
+        .map_err(|_| "Settings are unavailable".to_owned())?;
+    let transcript = match provider.as_str() {
+        "groq" => transcription::transcribe_recovery_groq(&settings, &samples).await,
+        "local" => transcription::transcribe_recovery_local(&app, &settings, &samples).await,
+        _ => return Err("Unsupported recovery transcription provider".to_owned()),
+    }
+    .map_err(|error| error.to_string())?;
+    let mode = if pending.mode == "scribe" {
+        Mode::Scribe
+    } else {
+        Mode::Dictation
+    };
+    recovery::write_transcript(&id, mode, &transcript, true).map_err(|error| error.to_string())?;
+    recovery::load_pending()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "The recovered transcript could not be reloaded".to_owned())
 }
 
 #[tauri::command]
@@ -540,8 +578,13 @@ pub fn run() {
             app_updates::check_app_update,
             app_updates::install_app_update,
             detect_local_providers,
+            credentials::set_provider_key,
+            credentials::delete_provider_key,
+            credentials::get_provider_key_status,
+            credentials::test_provider_connection,
             get_pending_recovery,
             discard_recovery,
+            retry_recovery_transcription,
             list_audio_input_devices,
             list_installed_whisper_models,
             system_profile::get_system_profile,

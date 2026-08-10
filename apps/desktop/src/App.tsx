@@ -28,10 +28,12 @@ import {
   detectProviders,
   downloadWhisperModel,
   getSystemProfile,
+  getProviderKeyStatus,
   listInstalledWhisperModels,
   loadSettings,
   persistSettings,
   previewMode,
+  testProviderConnection,
 } from "./tauri";
 import type {
   AppSettings,
@@ -39,6 +41,7 @@ import type {
   Mode,
   NavigationSection,
   ProviderStatus,
+  ProviderKeyStatus,
   RuntimeStatus,
   SystemProfile,
 } from "./types";
@@ -60,6 +63,7 @@ export function App() {
   const [section, setSection] = useState<NavigationSection>("general");
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
+  const [cloudStatuses, setCloudStatuses] = useState<ProviderKeyStatus[]>([]);
   const [runtime, setRuntime] = useState<RuntimeStatus>(initialRuntimeStatus);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -96,13 +100,44 @@ export function App() {
     });
 
     async function initialiseSpeechSetup() {
-      const [loaded, installed, profile] = await Promise.all([
+      const [loaded, installed, profile, groqStatus, geminiStatus] = await Promise.all([
         loadSettings(),
         listInstalledWhisperModels(),
         getSystemProfile(),
+        getProviderKeyStatus("groq"),
+        getProviderKeyStatus("gemini"),
       ]);
       if (disposed) return;
       setSystemProfile(profile);
+      let checkedGemini = geminiStatus;
+      if (loaded.cleanupProvider === "gemini" && geminiStatus.configured) {
+        try {
+          checkedGemini = await testProviderConnection("gemini");
+        } catch (error) {
+          checkedGemini = {
+            ...geminiStatus,
+            status: "error",
+            message: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
+      if (disposed) return;
+      setCloudStatuses([groqStatus, checkedGemini]);
+
+      if (loaded.transcriptionProvider === "groq" && groqStatus.configured) {
+        savedSettings.current = loaded;
+        setSettings(loaded);
+        setSpeechSetup({
+          phase: "ready",
+          modelId: "Groq Cloud",
+          bytesDownloaded: 0,
+          bytesTotal: 0,
+          error: null,
+        });
+        setOnboardingRequired(false);
+        setInitialising(false);
+        return;
+      }
 
       let next = loaded;
       const languageModels = modelsForLanguage(loaded.language);
@@ -262,6 +297,24 @@ export function App() {
     setProviders(await detectProviders());
   }
 
+  async function refreshCloudStatuses() {
+    const statuses = await Promise.all([
+      getProviderKeyStatus("groq"),
+      getProviderKeyStatus("gemini"),
+    ]);
+    setCloudStatuses(statuses);
+    const groq = statuses.find((status) => status.provider === "groq");
+    if (settings.transcriptionProvider === "groq" && groq?.configured) {
+      setSpeechSetup({
+        phase: "ready",
+        modelId: "Groq Cloud",
+        bytesDownloaded: 0,
+        bytesTotal: 0,
+        error: null,
+      });
+    }
+  }
+
   async function startSpeechDownload(modelId = speechSetup.modelId) {
     setSpeechSetup({
       phase: "downloading",
@@ -308,6 +361,27 @@ export function App() {
     if (openScribe) openVoiceSetup("scribe");
   }
 
+  async function useGroqFromOnboarding() {
+    const next: AppSettings = {
+      ...savedSettings.current,
+      transcriptionProvider: "groq",
+      speechModelSetupAttempted: true,
+      onboardingCompleted: true,
+    };
+    await persistSettings(next);
+    savedSettings.current = next;
+    setSettings(next);
+    setSpeechSetup({
+      phase: "missing",
+      modelId: "Groq Cloud",
+      bytesDownloaded: 0,
+      bytesTotal: 0,
+      error: "Connect a Groq API key to finish speech setup.",
+    });
+    setOnboardingRequired(false);
+    setSection("voice");
+  }
+
   function openVoiceSetup(target: "speech" | "scribe") {
     setSection("voice");
     if (target === "scribe") void refreshProviders();
@@ -328,7 +402,7 @@ export function App() {
     void persistSettings(persisted);
   }
 
-  const scribeReady = isScribeReady(settings, providers);
+  const scribeReady = isScribeReady(settings, providers, cloudStatuses);
   const showScribeSetup =
     providersChecked &&
     settings.cleanupProvider !== "disabled" &&
@@ -397,6 +471,7 @@ export function App() {
         scribeReady={scribeReady}
         onStartSpeech={startOnboardingSpeech}
         onRetrySpeech={() => void startSpeechDownload()}
+        onUseGroq={useGroqFromOnboarding}
         onFinish={finishOnboarding}
       />
     );
@@ -465,7 +540,11 @@ export function App() {
           )}
           <div className="sidebar-privacy">
             <LockKeyhole size={14} />
-            <span>Processing stays on this device</span>
+            <span>
+              {settings.transcriptionProvider === "groq" || settings.cleanupProvider === "gemini"
+                ? "Cloud is used only for selected providers"
+                : "Processing stays on this device"}
+            </span>
           </div>
         </div>
       </aside>
@@ -504,7 +583,9 @@ export function App() {
               settings={settings}
               update={update}
               providers={providers}
+              cloudStatuses={cloudStatuses}
               onDetectProviders={refreshProviders}
+              onCloudStatusChange={refreshCloudStatuses}
             />
           ) : null}
           {section === "dictionary" ? (

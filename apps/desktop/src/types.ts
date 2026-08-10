@@ -27,8 +27,9 @@ export interface AppSettings {
   whisperModel: string;
   backend: "auto" | "cpu" | "cuda" | "metal";
   language: string;
+  transcriptionProvider: "local" | "groq";
   defaultRegister: Register;
-  cleanupProvider: "auto" | "ollama" | "openai-compatible" | "disabled";
+  cleanupProvider: "auto" | "ollama" | "openai-compatible" | "gemini" | "disabled";
   cleanupModel: string;
   cleanupBaseUrl: string;
   trailingBufferMs: number;
@@ -40,6 +41,14 @@ export interface AppSettings {
   speechModelSetupAttempted: boolean;
   scribeSetupDismissed: boolean;
   onboardingCompleted: boolean;
+}
+
+export type CloudProvider = "groq" | "gemini";
+export interface ProviderKeyStatus {
+  provider: CloudProvider;
+  configured: boolean;
+  status: "missing" | "configured" | "connected" | "error";
+  message: string | null;
 }
 
 export interface SystemProfile {
@@ -95,5 +104,6 @@ export interface RecoveryManifest {
   updatedAtUnixMs: number;
   mode: "dictation" | "scribe";
   transcript: string;
+  failedProvider: string | null;
   audioPath: string | null;
 }

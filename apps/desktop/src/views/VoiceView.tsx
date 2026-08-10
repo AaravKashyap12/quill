@@ -18,7 +18,7 @@ import {
   englishOnly,
   majorLanguages,
 } from "../data/languages";
-import type { AppSettings, ProviderStatus } from "../types";
+import type { AppSettings, CloudProvider, ProviderKeyStatus, ProviderStatus } from "../types";
 import type { CudaRuntimeStatus } from "../types";
 import {
   cancelCudaRuntimeDownload,
@@ -29,10 +29,13 @@ import {
   downloadCudaRuntime,
   downloadWhisperModel,
   getCudaRuntimeStatus,
+  deleteProviderKey,
   listAudioInputDevices,
   listInstalledWhisperModels,
   openExternal,
   pullOllamaModel,
+  setProviderKey,
+  testProviderConnection,
 } from "../tauri";
 
 const CUDA_RUNTIME_ID = "cuda-runtime-windows-x64";
@@ -335,18 +338,27 @@ interface DownloadProgress {
   bytesTotal: number;
 }
 
+type CloudFeedback = {
+  kind: "neutral" | "success" | "error";
+  message: string;
+};
+
 interface VoiceViewProps {
   settings: AppSettings;
   update: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
   providers: ProviderStatus[];
+  cloudStatuses: ProviderKeyStatus[];
   onDetectProviders: () => Promise<void>;
+  onCloudStatusChange: () => Promise<void>;
 }
 
 export function VoiceView({
   settings,
   update,
   providers,
+  cloudStatuses,
   onDetectProviders,
+  onCloudStatusChange,
 }: VoiceViewProps) {
   const [checking, setChecking] = useState(false);
   const [inputDevices, setInputDevices] = useState<string[]>([]);
@@ -359,6 +371,9 @@ export function VoiceView({
     Record<string, { status: string; bytesDownloaded: number; bytesTotal: number }>
   >({});
   const [ollamaErrors, setOllamaErrors] = useState<Record<string, string>>({});
+  const [cloudKeys, setCloudKeys] = useState<Record<CloudProvider, string>>({ groq: "", gemini: "" });
+  const [cloudBusy, setCloudBusy] = useState<CloudProvider | null>(null);
+  const [cloudFeedback, setCloudFeedback] = useState<Partial<Record<CloudProvider, CloudFeedback>>>({});
   const platform = useMemo(detectPlatform, []);
   const availableProvider = providers.find((provider) => provider.available);
 
@@ -627,6 +642,167 @@ export function VoiceView({
     setChecking(false);
   }
 
+  async function saveCloudKey(provider: CloudProvider) {
+    setCloudBusy(provider);
+    setCloudFeedback((current) => ({ ...current, [provider]: undefined }));
+    try {
+      await setProviderKey(provider, cloudKeys[provider]);
+      setCloudKeys((current) => ({ ...current, [provider]: "" }));
+      const tested = await testProviderConnection(provider);
+      setCloudFeedback((current) => ({
+        ...current,
+        [provider]: {
+          kind: tested.status === "connected" ? "success" : "error",
+          message: tested.status === "connected" ? "Connected and ready" : tested.message ?? "Connection failed",
+        },
+      }));
+      await onCloudStatusChange();
+    } catch (error) {
+      setCloudFeedback((current) => ({
+        ...current,
+        [provider]: {
+          kind: "error",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    } finally {
+      setCloudBusy(null);
+    }
+  }
+
+  async function retestCloudKey(provider: CloudProvider) {
+    setCloudBusy(provider);
+    setCloudFeedback((current) => ({ ...current, [provider]: undefined }));
+    try {
+      const tested = await testProviderConnection(provider);
+      setCloudFeedback((current) => ({
+        ...current,
+        [provider]: {
+          kind: tested.status === "connected" ? "success" : "error",
+          message: tested.status === "connected" ? "Connected and ready" : tested.message ?? "Connection failed",
+        },
+      }));
+      await onCloudStatusChange();
+    } catch (error) {
+      setCloudFeedback((current) => ({
+        ...current,
+        [provider]: {
+          kind: "error",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    } finally {
+      setCloudBusy(null);
+    }
+  }
+
+  async function removeCloudKey(provider: CloudProvider) {
+    setCloudBusy(provider);
+    try {
+      await deleteProviderKey(provider);
+      setCloudFeedback((current) => ({
+        ...current,
+        [provider]: { kind: "neutral", message: "Key removed from this device" },
+      }));
+      await onCloudStatusChange();
+    } catch (error) {
+      setCloudFeedback((current) => ({
+        ...current,
+        [provider]: {
+          kind: "error",
+          message: error instanceof Error ? error.message : "Quill couldn't remove this key.",
+        },
+      }));
+    } finally {
+      setCloudBusy(null);
+    }
+  }
+
+  function cloudKeyControl(provider: CloudProvider) {
+    const status = cloudStatuses.find((item) => item.provider === provider);
+    const feedback = cloudFeedback[provider];
+    const providerName = provider === "groq" ? "Groq" : "Gemini";
+    const statusKind = cloudBusy === provider
+      ? "checking"
+      : feedback?.kind ?? (status?.status === "connected" ? "success" : status?.status === "error" ? "error" : "neutral");
+    const statusMessage = cloudBusy === provider
+      ? `Checking ${providerName}…`
+      : feedback?.message
+        ?? status?.message
+        ?? (status?.configured ? "Key saved securely in the system credential vault" : "Not connected");
+    const inputId = `${provider}-api-key`;
+    const statusId = `${provider}-connection-status`;
+    return (
+      <div className="cloud-key-control">
+        <label className="sr-only" htmlFor={inputId}>{providerName} API key</label>
+        <input
+          id={inputId}
+          type="password"
+          value={cloudKeys[provider]}
+          onChange={(event) => setCloudKeys((current) => ({ ...current, [provider]: event.target.value }))}
+          placeholder={status?.configured ? "Enter a new key to replace it" : `Paste ${providerName} API key`}
+          autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          aria-describedby={statusId}
+          aria-invalid={statusKind === "error"}
+        />
+        <div className="cloud-key-actions">
+          <button
+            type="button"
+            className="row-download-button"
+            disabled={cloudBusy === provider || !cloudKeys[provider].trim()}
+            onClick={() => void saveCloudKey(provider)}
+          >
+            {cloudBusy === provider ? "Checking…" : status?.configured ? "Replace and test" : "Save and test"}
+          </button>
+          {!status?.configured ? (
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => void openExternal(
+                provider === "groq"
+                  ? "https://console.groq.com/keys"
+                  : "https://aistudio.google.com/app/apikey",
+              )}
+            >
+              Get a {providerName} key <ExternalLink size={11} aria-hidden="true" />
+            </button>
+          ) : null}
+          {status?.configured ? (
+            <>
+              <button
+                type="button"
+                className="link-button"
+                disabled={cloudBusy === provider}
+                onClick={() => void retestCloudKey(provider)}
+              >
+                Test connection
+              </button>
+              <button
+                type="button"
+                className="link-button is-danger"
+                disabled={cloudBusy === provider}
+                onClick={() => void removeCloudKey(provider)}
+              >
+                Remove key
+              </button>
+            </>
+          ) : null}
+        </div>
+        <p
+          id={statusId}
+          className={`cloud-key-status is-${statusKind}`}
+          role={statusKind === "error" ? "alert" : "status"}
+          aria-live="polite"
+        >
+          <span aria-hidden="true" />
+          {statusMessage}
+        </p>
+      </div>
+    );
+  }
+
   const cudaProgress = downloads[CUDA_RUNTIME_ID];
   const cudaError = downloadErrors[CUDA_RUNTIME_ID] ?? cudaRuntime?.error;
   const cudaPercent = cudaProgress
@@ -641,15 +817,60 @@ export function VoiceView({
   return (
     <div className="view-stack">
       <header className="view-heading">
-        <h1>Everything runs <em>locally</em>.</h1>
+        <h1>Choose where your <em>voice</em> is processed.</h1>
+        <dl className="voice-data-path" aria-label="Active data path">
+          <div>
+            <dt>Audio</dt>
+            <dd>
+              {settings.transcriptionProvider === "groq"
+                ? "Sent to Groq after release"
+                : "Processed on this device"}
+            </dd>
+          </div>
+          <span aria-hidden="true">→</span>
+          <div>
+            <dt>Transcript</dt>
+            <dd>
+              {settings.cleanupProvider === "gemini"
+                ? "Sent to Gemini for Scribe"
+                : settings.cleanupProvider === "disabled"
+                  ? "No Scribe cleanup"
+                  : "Refined on this device"}
+            </dd>
+          </div>
+        </dl>
       </header>
 
       <section aria-labelledby="recognition-title">
         <div className="section-heading">
           <h2 id="recognition-title">Recognition</h2>
-          <span>whisper.cpp runs on your machine.</span>
+          <span>{settings.transcriptionProvider === "local" ? "Private and live." : "Cloud transcription after release."}</span>
         </div>
         <div className="settings-group">
+          <SettingRow
+            label="Speech provider"
+            description={
+              settings.transcriptionProvider === "local"
+                ? "Local types while you speak. Audio never leaves this device."
+                : "Groq can be faster on weak hardware. Audio is uploaded only after you finish speaking."
+            }
+          >
+            <select
+              value={settings.transcriptionProvider}
+              onChange={(event) => update("transcriptionProvider", event.target.value as AppSettings["transcriptionProvider"])}
+            >
+              <option value="local">Local · whisper.cpp</option>
+              <option value="groq">Groq Cloud · inserts after release</option>
+            </select>
+          </SettingRow>
+          {settings.transcriptionProvider === "groq" ? (
+            <SettingRow
+              label="Groq connection"
+              description="Your recording is sent to Groq for transcription. Quill never enables this automatically."
+            >
+              {cloudKeyControl("groq")}
+            </SettingRow>
+          ) : null}
           <SettingRow
             label="Microphone"
             description={`Default follows ${platform === "mac" ? "macOS" : platform === "win" ? "Windows" : "the system"}. Pick a specific device to pin it.`}
@@ -911,9 +1132,21 @@ export function VoiceView({
         <div className="section-heading">
           <h2 id="scribe-title">Scribe cleanup</h2>
           <ProviderBadge
-            state={checking ? "checking" : availableProvider ? "available" : "unavailable"}
+            state={
+              settings.cleanupProvider === "gemini"
+                ? cloudStatuses.some((status) => status.provider === "gemini" && status.status === "connected")
+                  ? "available"
+                  : "unavailable"
+                : checking ? "checking" : availableProvider ? "available" : "unavailable"
+            }
             label={
-              checking
+              settings.cleanupProvider === "gemini"
+                ? cloudStatuses.find((status) => status.provider === "gemini")?.status === "connected"
+                  ? "Gemini connected"
+                  : cloudStatuses.find((status) => status.provider === "gemini")?.configured
+                    ? "Gemini needs a connection check"
+                    : "Gemini key needed"
+                : checking
                 ? "Checking local servers"
                 : availableProvider
                   ? `${availableProvider.kind} connected`
@@ -927,7 +1160,9 @@ export function VoiceView({
             <SettingRow
               label="Provider"
               description={
-                availableProvider
+                settings.cleanupProvider === "gemini"
+                  ? "Gemini Flash-Lite cleans the transcript in the cloud only after you finish."
+                  : availableProvider
                   ? "Auto-detect matches whichever local server is running."
                   : "No local server detected yet. Install one below — Quill will find it automatically."
               }
@@ -945,6 +1180,7 @@ export function VoiceView({
                   <option value="auto">Auto-detect local server</option>
                   <option value="ollama">Ollama</option>
                   <option value="openai-compatible">OpenAI-compatible</option>
+                  <option value="gemini">Gemini Cloud · Flash-Lite</option>
                   <option value="disabled">Disabled</option>
                 </select>
                 <button
@@ -958,6 +1194,15 @@ export function VoiceView({
                 </button>
               </div>
             </SettingRow>
+            {settings.cleanupProvider === "gemini" ? (
+              <SettingRow
+                label="Gemini connection"
+                description="Only transcript text is sent to Google after you finish. Audio is never sent to Gemini."
+              >
+                {cloudKeyControl("gemini")}
+              </SettingRow>
+            ) : null}
+            {settings.cleanupProvider !== "gemini" && settings.cleanupProvider !== "disabled" ? (
             <details className="model-guide" open={!availableProvider}>
               <summary>Compare and install local servers</summary>
               <div className="model-guide-scroll">
@@ -1007,7 +1252,9 @@ export function VoiceView({
                 connects.
               </p>
             </details>
+            ) : null}
           </div>
+          {settings.cleanupProvider !== "gemini" && settings.cleanupProvider !== "disabled" ? (
           <div className="model-setting">
             <SettingRow
               label="Cleanup model"
@@ -1167,6 +1414,7 @@ export function VoiceView({
               );
             })()}
           </div>
+          ) : null}
           <SettingRow
             label="Correction window"
             description="Scribe holds the complete utterance until you stop, then types only the resolved wording."
@@ -1175,12 +1423,20 @@ export function VoiceView({
           </SettingRow>
         </div>
 
+        {settings.cleanupProvider === "gemini" ? (
+          <p className="safety-copy">
+            Scribe sends transcript text — never audio — to Gemini with the same safety contract and review step used for local models.
+          </p>
+        ) : settings.cleanupProvider === "disabled" ? (
+          <p className="safety-copy">Scribe cleanup is off. Dictation remains available.</p>
+        ) : (
         <p className="safety-copy">
           Scribe forwards the raw transcript to your local LLM with a strict "polish,
           don't invent" prompt. The model fixes tone, punctuation, mishearings, and
           self-corrections but must preserve every specific fact you said. Runs
           entirely on your machine — nothing leaves this device.
         </p>
+        )}
       </section>
     </div>
   );

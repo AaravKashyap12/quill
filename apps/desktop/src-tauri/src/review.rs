@@ -164,7 +164,7 @@ pub async fn regenerate_scribe_review(
             }
             Err(error) => {
                 session.warning = Some(format!(
-                    "Local cleanup could not regenerate this draft: {error}"
+                    "Scribe cleanup could not regenerate this draft: {error}"
                 ));
             }
         }

@@ -1,3 +1,4 @@
+use crate::credentials::GEMINI_MODEL;
 use crate::metrics;
 use crate::model::{AppSettings, CleanupProvider, ProviderStatus};
 use crate::register::Register;
@@ -9,6 +10,7 @@ use std::time::{Duration, Instant};
 const OLLAMA_URL: &str = "http://127.0.0.1:11434";
 const MODEL_CONTEXT_TOKENS: usize = 2_048;
 const MAX_GENERATED_TOKENS: usize = 512;
+const GEMINI_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const CONTEXT_SAFETY_MARGIN_TOKENS: usize = 128;
 const MAX_PROMPT_TOKEN_ESTIMATE: usize =
     MODEL_CONTEXT_TOKENS - MAX_GENERATED_TOKENS - CONTEXT_SAFETY_MARGIN_TOKENS;
@@ -26,7 +28,10 @@ const COMPATIBLE_URLS: [&str; 3] = [
 pub enum Protocol {
     Ollama,
     OpenAiCompatible,
+    Gemini,
 }
+
+const GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 
 /// Resolve which protocol Quill should speak and which base URL to talk to,
 /// given the user's explicit setting and (for auto-detect) the current
@@ -56,6 +61,7 @@ pub async fn resolve_endpoint(settings: &AppSettings) -> Result<(Protocol, Strin
             };
             Ok((Protocol::OpenAiCompatible, url))
         }
+        CleanupProvider::Gemini => Ok((Protocol::Gemini, GEMINI_BASE_URL.to_owned())),
         CleanupProvider::Auto => {
             let providers = detect_providers().await;
             if let Some(p) = providers.iter().find(|p| p.kind == "ollama" && p.available) {
@@ -413,6 +419,11 @@ pub async fn warm_up(settings: AppSettings) {
     let Ok((protocol, base_url)) = resolve_endpoint(&settings).await else {
         return;
     };
+    // Cloud models do not need pre-warming, and a background warm-up must
+    // never send even placeholder content to an explicitly selected service.
+    if protocol == Protocol::Gemini {
+        return;
+    }
     if ensure_loopback(&base_url).is_err() {
         return;
     }
@@ -467,6 +478,7 @@ pub async fn warm_up(settings: AppSettings) {
                 .send()
                 .await
         }
+        Protocol::Gemini => unreachable!("Gemini warm-up returns before creating a request"),
     };
 
     match result {
@@ -553,6 +565,31 @@ fn parse_openai_output(payload: &serde_json::Value) -> Option<ProviderOutput> {
         .get("finish_reason")
         .and_then(serde_json::Value::as_str)
         .is_some_and(|reason| reason.eq_ignore_ascii_case("length"));
+    Some(ProviderOutput { text, truncated })
+}
+
+fn parse_gemini_output(payload: &serde_json::Value) -> Option<ProviderOutput> {
+    let candidate = payload.get("candidates")?.as_array()?.first()?;
+    let text = candidate
+        .get("content")?
+        .get("parts")?
+        .as_array()?
+        .iter()
+        .filter(|part| {
+            !part
+                .get("thought")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+        })
+        .filter_map(|part| part.get("text").and_then(serde_json::Value::as_str))
+        .collect::<Vec<_>>()
+        .join("")
+        .trim()
+        .to_owned();
+    let truncated = candidate
+        .get("finishReason")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|reason| reason.eq_ignore_ascii_case("MAX_TOKENS"));
     Some(ProviderOutput { text, truncated })
 }
 
@@ -647,20 +684,27 @@ async fn clean_with_outcome(
         ));
     }
     let (protocol, base_url) = resolve_endpoint(settings).await?;
-    ensure_loopback(&base_url)?;
+    if protocol != Protocol::Gemini {
+        ensure_loopback(&base_url)?;
+    }
     // Cold-loading a 400 MB–2 GB local model into RAM can easily take 30–60s on
     // a slow disk, especially on the very first generate after the server
     // started. Warm requests remain fast; the bound only guards against a dead
     // server.
-    let client = Client::builder()
-        // System proxy env vars must NOT apply to loopback traffic. Reqwest
-        // would otherwise try to route `POST /api/generate` through a
-        // corporate/VPN proxy that has no route to 127.0.0.1, producing a
-        // generic "error sending request" that looks like Ollama is down.
-        .no_proxy()
-        .timeout(Duration::from_secs(90))
-        .build()?;
-    let model = resolve_model(settings)?;
+    let client = if protocol == Protocol::Gemini {
+        crate::credentials::cloud_client().map_err(|error| anyhow!(error))?
+    } else {
+        // System proxy env vars must NOT apply to loopback traffic.
+        Client::builder()
+            .timeout(Duration::from_secs(90))
+            .no_proxy()
+            .build()?
+    };
+    let model = if protocol == Protocol::Gemini {
+        GEMINI_MODEL.to_owned()
+    } else {
+        resolve_model(settings)?
+    };
 
     let provider_output = match protocol {
         Protocol::Ollama => {
@@ -714,6 +758,67 @@ async fn clean_with_outcome(
             let payload: serde_json::Value = response.json().await?;
             parse_openai_output(&payload)
         }
+        Protocol::Gemini => {
+            let key = crate::credentials::get_key(crate::credentials::CloudProvider::Gemini)
+                .map_err(|error| anyhow!(error))?
+                .ok_or_else(|| {
+                    anyhow!("Connect a Gemini API key in Voice settings before using Scribe.")
+                })?;
+            let request_started = Instant::now();
+            let response = match client
+                .post(format!("{base_url}/models/{model}:generateContent"))
+                .header("x-goog-api-key", key)
+                .json(&serde_json::json!({
+                    "contents": [{ "role": "user", "parts": [{ "text": request_prompt }] }],
+                    "generationConfig": {
+                        "temperature": 0,
+                        "maxOutputTokens": MAX_GENERATED_TOKENS,
+                        "thinkingConfig": { "thinkingBudget": 0 }
+                    }
+                }))
+                .timeout(GEMINI_REQUEST_TIMEOUT)
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    record_gemini_stage(
+                        "geminiRequestMs",
+                        request_started.elapsed().as_millis(),
+                        cloud_transport_outcome(&error),
+                    );
+                    return Err(classify_cloud_transport_error(error));
+                }
+            };
+            let status = response.status();
+            if !status.is_success() {
+                record_gemini_stage(
+                    "geminiRequestMs",
+                    request_started.elapsed().as_millis(),
+                    cloud_http_outcome(status),
+                );
+                return Err(classify_cloud_http_error("Gemini", status));
+            }
+            let payload: serde_json::Value = match response.json().await {
+                Ok(payload) => payload,
+                Err(_) => {
+                    record_gemini_stage(
+                        "geminiRequestMs",
+                        request_started.elapsed().as_millis(),
+                        "providerFailure",
+                    );
+                    return Err(anyhow!(
+                        "Gemini returned a malformed response; using the safe local draft."
+                    ));
+                }
+            };
+            record_gemini_stage(
+                "geminiRequestMs",
+                request_started.elapsed().as_millis(),
+                "success",
+            );
+            parse_gemini_output(&payload)
+        }
     };
 
     let Some(provider_output) = provider_output else {
@@ -727,7 +832,69 @@ async fn clean_with_outcome(
     // check which blocked legitimate rewrites like "hei" → "Hey". Reject
     // newly introduced commitment/proposal concepts as well as pathological
     // empty or runaway outputs. Never log either body: both contain user text.
-    Ok(apply_output_guards(transcript, provider_output))
+    let guard_started = Instant::now();
+    let outcome = apply_output_guards(transcript, provider_output);
+    if protocol == Protocol::Gemini {
+        record_gemini_stage(
+            "scribeGuardMs",
+            guard_started.elapsed().as_millis(),
+            if outcome.guard_reason.is_some() {
+                "safetyFallback"
+            } else {
+                "success"
+            },
+        );
+    }
+    Ok(outcome)
+}
+
+fn record_gemini_stage(metric: &str, value_ms: u128, outcome: &str) {
+    if let Err(error) =
+        metrics::record_cloud_stage(metric, value_ms, "gemini", "scribe", outcome, None)
+    {
+        tracing::warn!(%error, metric, "could not record cloud latency metric");
+    }
+}
+
+fn cloud_transport_outcome(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "timeout"
+    } else {
+        "transportFailure"
+    }
+}
+
+fn cloud_http_outcome(status: reqwest::StatusCode) -> &'static str {
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        "quota"
+    } else {
+        "providerFailure"
+    }
+}
+
+fn classify_cloud_transport_error(error: reqwest::Error) -> anyhow::Error {
+    if error.is_timeout() {
+        anyhow!("The cloud provider timed out. Your recording was kept so you can retry.")
+    } else if error.is_connect() {
+        anyhow!("The cloud provider could not be reached. Check your connection and try again.")
+    } else {
+        anyhow!("The cloud request failed before a response was received.")
+    }
+}
+
+fn classify_cloud_http_error(provider: &str, status: reqwest::StatusCode) -> anyhow::Error {
+    match status.as_u16() {
+        401 | 403 => {
+            anyhow!("{provider} rejected the saved API key. Reconnect it in Voice settings.")
+        }
+        429 => {
+            anyhow!("{provider} quota is exhausted. Try again later or select local processing.")
+        }
+        code if code >= 500 => {
+            anyhow!("{provider} is temporarily unavailable. Your data was kept so you can retry.")
+        }
+        _ => anyhow!("{provider} returned {status}. No provider response content was stored."),
+    }
 }
 
 fn classify_transport_error(base_url: &str, model: &str, error: reqwest::Error) -> anyhow::Error {
@@ -829,6 +996,35 @@ mod tests {
             resolve_simple_corrections("send it Tuesday no wait Wednesday"),
             "send it Wednesday"
         );
+    }
+
+    #[test]
+    fn parses_gemini_text_and_length_finish_reason() {
+        let payload = serde_json::json!({
+            "candidates": [{
+                "content": { "parts": [
+                    { "text": "hidden", "thought": true },
+                    { "text": "Clean draft" }
+                ]},
+                "finishReason": "MAX_TOKENS"
+            }]
+        });
+        let output = parse_gemini_output(&payload).unwrap();
+        assert_eq!(output.text, "Clean draft");
+        assert!(output.truncated);
+    }
+
+    #[test]
+    fn gemini_endpoint_does_not_depend_on_plaintext_settings_key() {
+        let settings = AppSettings {
+            cleanup_provider: CleanupProvider::Gemini,
+            cleanup_base_url: "http://127.0.0.1:11434".into(),
+            ..AppSettings::default()
+        };
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (protocol, endpoint) = runtime.block_on(resolve_endpoint(&settings)).unwrap();
+        assert_eq!(protocol, Protocol::Gemini);
+        assert_eq!(endpoint, GEMINI_BASE_URL);
     }
 
     #[test]

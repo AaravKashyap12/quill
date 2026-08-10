@@ -136,7 +136,7 @@ struct WhisperWord {
     end: f64,
 }
 
-fn dictionary_prompt(entries: &[DictionaryEntry]) -> (Option<String>, bool) {
+pub(crate) fn dictionary_prompt(entries: &[DictionaryEntry]) -> (Option<String>, bool) {
     let mut prompt = String::new();
     let mut prompt_chars = 0usize;
     let mut truncated = false;

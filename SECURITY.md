@@ -12,8 +12,15 @@ the issue requires Accessibility permissions.
 
 ## Security properties
 
-- Speech audio and transcripts remain local unless the user explicitly
-  configures a non-local cleanup endpoint.
+- Speech audio and transcripts remain local by default. Audio leaves the device
+  only when the user explicitly selects Groq transcription; transcript text
+  leaves the device only when the user explicitly selects Gemini cleanup.
+- Adding a cloud API key never selects or enables that provider automatically.
+- Groq and Gemini API keys are stored by Windows Credential Manager or macOS
+  Keychain. They are not serialized into `settings.json`, returned to the
+  frontend after saving, placed in URLs, logs, tracing fields, or metrics.
+- Provider error response bodies are never logged because they can echo audio
+  transcripts or prompt content.
 - Cleanup runs against a loopback-only LLM endpoint; the client rejects any
   non-loopback host before sending a request.
 - Cleanup output can rephrase and restructure the transcript (including
@@ -46,3 +53,7 @@ the issue requires Accessibility permissions.
 - Quill does not install global keyboard hooks on Windows.
 - Recovery data is stored under the user-local application data directory and
   is deleted after a successful commit.
+  If cloud transcription fails before producing text, Quill retains the audio
+  checkpoint so the recording is not lost, even when routine audio checkpoints
+  were disabled. The recovery banner identifies the failed provider without
+  storing its response body.

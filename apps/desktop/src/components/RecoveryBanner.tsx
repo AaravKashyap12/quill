@@ -9,7 +9,7 @@ import {
   X,
 } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
-import { discardRecovery, getPendingRecovery } from "../tauri";
+import { discardRecovery, getPendingRecovery, retryRecoveryTranscription } from "../tauri";
 import type { RecoveryManifest } from "../types";
 
 function formatWhen(ms: number): string {
@@ -21,6 +21,13 @@ function formatWhen(ms: number): string {
   if (hours < 24) return `${hours} h ago`;
   const days = Math.round(hours / 24);
   return `${days} d ago`;
+}
+
+function providerLabel(provider: string | null): string {
+  if (provider === "groq") return "Groq";
+  return provider
+    ? provider.replace(/(^|[-_])([a-z])/g, (_, separator, letter) => `${separator ? " " : ""}${letter.toUpperCase()}`)
+    : "Cloud provider";
 }
 
 /** Banner that surfaces a transcript checkpoint left behind by a crashed
@@ -35,6 +42,7 @@ export function RecoveryBanner() {
   const [pending, setPending] = useState<RecoveryManifest | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const [retrying, setRetrying] = useState<"groq" | "local" | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -84,7 +92,7 @@ export function RecoveryBanner() {
     setStatus({ kind: "idle" });
     try {
       await navigator.clipboard.writeText(recovery.transcript);
-    } catch (error) {
+    } catch {
       setExpanded(true);
       setStatus({
         kind: "copy-failed",
@@ -103,7 +111,7 @@ export function RecoveryBanner() {
           ),
         900,
       );
-    } catch (error) {
+    } catch {
       const latest = await getPendingRecovery().catch(() => null);
       if (latest && latest.id !== recovery.id) {
         setPending(latest);
@@ -117,9 +125,7 @@ export function RecoveryBanner() {
       }
       setStatus({
         kind: "discard-failed",
-        error: `Copied to clipboard, but the recovery file couldn't be removed: ${String(
-          error,
-        )}. It will still appear next launch — retry Discard.`,
+        error: "Copied to clipboard, but Quill couldn't remove the recovery file. It will still appear next launch — retry Discard.",
       });
     }
   }
@@ -133,7 +139,7 @@ export function RecoveryBanner() {
       setPending((current) =>
         current?.id === recovery.id ? null : current,
       );
-    } catch (error) {
+    } catch {
       const latest = await getPendingRecovery().catch(() => null);
       if (latest && latest.id !== recovery.id) {
         setPending(latest);
@@ -147,21 +153,47 @@ export function RecoveryBanner() {
       }
       setStatus({
         kind: "discard-failed",
-        error: `Couldn't remove the recovery file: ${String(
-          error,
-        )}. It will still appear next launch.`,
+        error: "Quill couldn't remove the recovery file. It will still appear next launch.",
       });
     }
   }
 
+  async function retry(provider: "groq" | "local") {
+    if (!pending) return;
+    setRetrying(provider);
+    setStatus({ kind: "idle" });
+    try {
+      const recovered = await retryRecoveryTranscription(pending.id, provider);
+      setPending(recovered);
+      setExpanded(true);
+    } catch {
+      setStatus({
+        kind: "discard-failed",
+        error: provider === "groq"
+          ? "Groq couldn't finish this recording. Check your connection and try again, or transcribe it locally."
+          : "Local transcription couldn't finish. Check that a speech model is installed and try again.",
+      });
+    } finally {
+      setRetrying(null);
+    }
+  }
+
   return (
-    <div className="recovery-banner" role="status" aria-live="polite">
+    <section
+      className="recovery-banner"
+      aria-labelledby="recovery-title"
+      aria-busy={retrying !== null}
+    >
       <div className="recovery-banner__head">
         <span className="recovery-banner__icon" aria-hidden="true">
           <LifeBuoy size={16} strokeWidth={1.8} />
         </span>
         <div className="recovery-banner__meta">
-          <strong>Recovered {pending.mode} from a previous session</strong>
+          <strong id="recovery-title">
+            {pending.failedProvider
+              ? `Recording kept after ${providerLabel(pending.failedProvider)} was unavailable`
+              : `Recovered ${pending.mode} from an earlier session`}
+          </strong>
           <span>
             {wordCount === 1 ? "1 word" : `${wordCount} words`} · saved{" "}
             {formatWhen(pending.updatedAtUnixMs)}
@@ -222,6 +254,17 @@ export function RecoveryBanner() {
           {status.error}
         </p>
       ) : null}
+      {pending.failedProvider ? (
+        <div className="recovery-banner__retry" aria-label="Recovery options">
+          <button type="button" className="ghost-button" disabled={retrying !== null} onClick={() => void retry("groq")}>
+            {retrying === "groq" ? "Retrying Groq…" : "Retry Groq"}
+          </button>
+          <button type="button" className="ghost-button" disabled={retrying !== null} onClick={() => void retry("local")}>
+            {retrying === "local" ? "Transcribing locally…" : "Transcribe locally"}
+          </button>
+          <span>Local transcription requires an installed speech model.</span>
+        </div>
+      ) : null}
       {expanded ? (
         <div className="recovery-banner__body">
           <pre>{pending.transcript.trim() || "(empty)"}</pre>
@@ -233,6 +276,6 @@ export function RecoveryBanner() {
           ) : null}
         </div>
       ) : null}
-    </div>
+    </section>
   );
 }

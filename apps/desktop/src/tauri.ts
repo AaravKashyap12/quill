@@ -10,6 +10,8 @@ import type {
   DictionarySuggestion,
   Mode,
   ProviderStatus,
+  ProviderKeyStatus,
+  CloudProvider,
   Register,
   RecoveryManifest,
   ScribeReviewDraft,
@@ -82,6 +84,44 @@ export async function detectProviders(): Promise<ProviderStatus[]> {
     ];
   }
   return invoke<ProviderStatus[]>("detect_local_providers");
+}
+
+export async function retryRecoveryTranscription(
+  id: string,
+  provider: "groq" | "local",
+): Promise<RecoveryManifest> {
+  if (!isTauri()) throw new Error("Recovery transcription is available in the desktop app.");
+  return invoke<RecoveryManifest>("retry_recovery_transcription", { id, provider });
+}
+
+export async function getProviderKeyStatus(provider: CloudProvider): Promise<ProviderKeyStatus> {
+  if (!isTauri()) {
+    const configured = window.localStorage.getItem(`quill.cloud.${provider}`) === "configured";
+    return { provider, configured, status: configured ? "configured" : "missing", message: null };
+  }
+  return invoke<ProviderKeyStatus>("get_provider_key_status", { provider });
+}
+
+export async function setProviderKey(provider: CloudProvider, key: string): Promise<ProviderKeyStatus> {
+  if (!isTauri()) {
+    if (!key.trim()) throw new Error("Enter an API key before saving.");
+    window.localStorage.setItem(`quill.cloud.${provider}`, "configured");
+    return { provider, configured: true, status: "configured", message: null };
+  }
+  return invoke<ProviderKeyStatus>("set_provider_key", { provider, key });
+}
+
+export async function deleteProviderKey(provider: CloudProvider): Promise<ProviderKeyStatus> {
+  if (!isTauri()) {
+    window.localStorage.removeItem(`quill.cloud.${provider}`);
+    return { provider, configured: false, status: "missing", message: null };
+  }
+  return invoke<ProviderKeyStatus>("delete_provider_key", { provider });
+}
+
+export async function testProviderConnection(provider: CloudProvider): Promise<ProviderKeyStatus> {
+  if (!isTauri()) return { provider, configured: true, status: "connected", message: null };
+  return invoke<ProviderKeyStatus>("test_provider_connection", { provider });
 }
 
 export async function listAudioInputDevices(): Promise<string[]> {

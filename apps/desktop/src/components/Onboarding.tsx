@@ -30,6 +30,7 @@ interface OnboardingProps {
   scribeReady: boolean;
   onStartSpeech: (modelId: string, language: string) => Promise<void>;
   onRetrySpeech: () => void;
+  onUseGroq: () => Promise<void>;
   onFinish: (openScribe: boolean) => Promise<void>;
 }
 
@@ -66,6 +67,7 @@ export function Onboarding({
   scribeReady,
   onStartSpeech,
   onRetrySpeech,
+  onUseGroq,
   onFinish,
 }: OnboardingProps) {
   const [step, setStep] = useState<SetupStep>("welcome");
@@ -134,7 +136,7 @@ export function Onboarding({
 
           <p className="onboarding-privacy">
             <ShieldCheck size={15} aria-hidden="true" />
-            Speech stays on this computer.
+            Local by default. Cloud only when you choose it.
           </p>
         </aside>
 
@@ -145,17 +147,24 @@ export function Onboarding({
                 Set up Quill for your voice.
               </h1>
               <p className="onboarding-lede">
-                Two quick choices help Quill select a speech model that fits this computer.
-                The model downloads here and stays here.
+                Start with private, on-device speech recognition, or connect Groq
+                if this computer needs a lighter option.
               </p>
               <ul className="onboarding-promise" aria-label="Setup details">
                 <li>About 2 minutes</li>
                 <li>No account</li>
-                <li>No cloud processing</li>
+                <li>Local is the default</li>
               </ul>
-              <button className="primary-button onboarding-primary" type="button" onClick={() => setStep("preferences")}>
-                Choose a model <ArrowRight size={15} aria-hidden="true" />
-              </button>
+              <div className="onboarding-route-choice">
+                <button className="primary-button" type="button" onClick={() => setStep("preferences")}>
+                  Set up on this device <ArrowRight size={15} aria-hidden="true" />
+                </button>
+                <span>Speech stays on this computer and types while you speak.</span>
+                <button className="ghost-action" type="button" onClick={() => void onUseGroq()}>
+                  Connect Groq Cloud
+                </button>
+                <span>Audio is sent to Groq after you release the shortcut.</span>
+              </div>
             </div>
           ) : null}
 
