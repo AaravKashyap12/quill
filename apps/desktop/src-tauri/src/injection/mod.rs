@@ -92,7 +92,7 @@ pub fn capture_editor_context(
 
     #[cfg(target_os = "macos")]
     {
-        return macos::capture_editor_context(&target.inner, max_context_chars);
+        macos::capture_editor_context(&target.inner, max_context_chars)
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
@@ -112,7 +112,7 @@ pub fn selected_text_matches(target: &InsertionTarget, expected: &str) -> Result
 
     #[cfg(target_os = "macos")]
     {
-        return macos::selected_text_matches(&target.inner, expected);
+        macos::selected_text_matches(&target.inner, expected)
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
