@@ -18,6 +18,16 @@ pub struct InsertionTarget {
     inner: macos::InsertionTarget,
 }
 
+/// A privacy-bounded snapshot of text around the caret. The platform layer
+/// returns text only from the focused editable control and rejects password
+/// fields. Callers must keep this in memory and must never trace its contents.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EditorTextContext {
+    pub selected_text: Option<String>,
+    pub surrounding_before: Option<String>,
+    pub surrounding_after: Option<String>,
+}
+
 impl InsertionTarget {
     #[cfg(windows)]
     pub(crate) fn top_level(&self) -> isize {
@@ -27,6 +37,11 @@ impl InsertionTarget {
     #[cfg(windows)]
     pub(crate) fn process_id(&self) -> u32 {
         self.inner.process_id()
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn bundle_identifier(&self) -> Option<String> {
+        macos::bundle_identifier(&self.inner)
     }
 }
 
@@ -61,6 +76,49 @@ pub fn capture_target() -> Result<InsertionTarget> {
 
         #[cfg(not(target_os = "macos"))]
         Ok(InsertionTarget {})
+    }
+}
+
+/// Capture selected and nearby text without using the clipboard. Unsupported
+/// controls return `Ok(None)` so ordinary Scribe remains available.
+pub fn capture_editor_context(
+    target: &InsertionTarget,
+    max_context_chars: i32,
+) -> Result<Option<EditorTextContext>> {
+    #[cfg(windows)]
+    {
+        windows::capture_editor_context(&target.inner, max_context_chars)
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return macos::capture_editor_context(&target.inner, max_context_chars);
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = (target, max_context_chars);
+        Ok(None)
+    }
+}
+
+/// Rewrite mode is fail-closed: after review, Quill verifies that the target
+/// selection still contains the exact text captured at activation.
+pub fn selected_text_matches(target: &InsertionTarget, expected: &str) -> Result<bool> {
+    #[cfg(windows)]
+    {
+        windows::selected_text_matches(&target.inner, expected)
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return macos::selected_text_matches(&target.inner, expected);
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = (target, expected);
+        Ok(false)
     }
 }
 

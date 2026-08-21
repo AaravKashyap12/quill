@@ -244,10 +244,12 @@ export async function getScribeReview(): Promise<ScribeReviewDraft | null> {
 export async function regenerateScribeReview(
   register?: Register,
   instruction?: string,
+  useContext?: boolean,
 ): Promise<ScribeReviewDraft> {
   return invoke<ScribeReviewDraft>("regenerate_scribe_review", {
     register: register ?? null,
     instruction: instruction?.trim() || null,
+    useContext: useContext ?? null,
   });
 }
 

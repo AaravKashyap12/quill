@@ -1637,6 +1637,57 @@ button:disabled {
   line-height: 1.5;
 }
 
+.style-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px 12px;
+}
+
+.style-profile-grid label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+.style-profile-grid select {
+  width: 100%;
+  min-width: 0;
+}
+
+.style-profile-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--text-muted);
+  font-size: 10.5px;
+}
+
+.style-profile-footer .link-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+@media (max-width: 820px) {
+  .style-profile-setting .setting-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 11px;
+  }
+
+  .style-profile-setting .setting-control,
+  .style-profile-setting .setting-control select {
+    width: 100%;
+  }
+}
+
 .setting-row {
   display: flex;
   min-height: 66px;
@@ -4140,6 +4191,15 @@ button:disabled {
     width: 100%;
   }
 
+  .style-profile-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .style-profile-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .recovery-banner {
     margin: 16px 15px 0;
   }
@@ -4451,6 +4511,37 @@ button:disabled {
   border: 1px solid rgba(255, 255, 255, 0.09) !important;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.045) !important;
+}
+
+.scribe-composer__context {
+  display: flex;
+  min-width: 0;
+  height: 23px;
+  align-items: center;
+  gap: 6px;
+  margin: -1px 11px 5px;
+  padding: 0 8px;
+  color: rgba(239, 235, 226, 0.54);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 8.5px;
+  line-height: 1;
+}
+
+.scribe-composer__context span {
+  overflow: hidden;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scribe-composer__context b {
+  color: rgba(208, 185, 142, 0.78);
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .scribe-composer__editor {

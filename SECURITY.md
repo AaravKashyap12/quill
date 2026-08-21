@@ -15,6 +15,11 @@ the issue requires Accessibility permissions.
 - Speech audio and transcripts remain local by default. Audio leaves the device
   only when the user explicitly selects Groq transcription; transcript text
   leaves the device only when the user explicitly selects Gemini cleanup.
+- Scribe's nearby-text context is disabled by default, including for existing
+  installations. When enabled, Quill reads only selected text and a bounded
+  region around the caret; it never captures screenshots or password fields.
+  Context stays in memory and leaves the device only when Gemini is explicitly
+  selected for cleanup.
 - Adding a cloud API key never selects or enables that provider automatically.
 - Groq and Gemini API keys are stored by Windows Credential Manager or macOS
   Keychain. They are not serialized into `settings.json`, returned to the
@@ -29,8 +34,8 @@ the issue requires Accessibility permissions.
   offers, constraints, or other facts. Email cleanup may add a greeting and
   sign-off; the other detected writing registers may not. A deterministic
   guard replaces the model's output with a safe local draft when the response
-  is empty, malformed, truncated at the generation limit, balloons past 3× the
-  input word count, or introduces new promise, availability, proposal, or
+  is empty, malformed, truncated at the generation limit, exceeds the
+  action-specific output budget, or introduces new promise, availability, proposal, or
   follow-up language absent from the transcript. Inputs that would exceed the
   reserved model-context budget are rejected before any request, preventing
   left-truncation from silently deleting the safety instructions.
@@ -44,6 +49,9 @@ the issue requires Accessibility permissions.
 - Transcripts, cleanup source text, dictionary entry contents, and candidate
   dictionary suggestion pairs are never written to the on-disk log or metrics
   files; only counts, lengths, and error classes are recorded.
+- Per-app writing preferences store aggregate counts and style choices only.
+  Accepted drafts, selected text, and nearby editor content are never retained
+  as writing samples.
 - Choosing Add persists a suggestion pair as a dictionary entry. Choosing
   Dismiss persists the pair in the local settings file so Quill does not offer
   it again; this dismissal history retains at most the 200 newest pairs and can

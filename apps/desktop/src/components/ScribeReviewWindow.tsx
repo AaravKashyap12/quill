@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  FileText,
   PenLine,
   RefreshCw,
   Send,
@@ -106,7 +107,11 @@ export function ScribeReviewWindow({
     textarea.current?.focus();
   }
 
-  async function regenerate(registerOverride?: Register, followUp = instruction) {
+  async function regenerate(
+    registerOverride?: Register,
+    followUp = instruction,
+    useContext?: boolean,
+  ) {
     if (!review || working) return;
     const previousRegister = review.register;
     if (registerOverride) {
@@ -119,10 +124,11 @@ export function ScribeReviewWindow({
     setCopied(false);
     try {
       const next = isTauri()
-        ? await regenerateScribeReview(registerOverride, followUp)
+        ? await regenerateScribeReview(registerOverride, followUp, useContext)
         : {
             ...review,
             register: registerOverride ?? review.register,
+            contextUsed: useContext ?? review.contextUsed,
             draft: followUp.trim()
               ? `${draft.trim()}\n\n${followUp.trim().replace(/^./, (letter) => letter.toUpperCase())}.`
               : versions.length % 2 === 0
@@ -254,6 +260,12 @@ export function ScribeReviewWindow({
         </button>
       </header>
 
+      <div className="scribe-composer__context" aria-label="Scribe context">
+        <FileText size={12} aria-hidden="true" />
+        <span>{review.contextLabel}</span>
+        <b>{review.action}</b>
+      </div>
+
       <div className="scribe-composer__editor">
         <label htmlFor="scribe-draft">Generated draft</label>
         <textarea
@@ -309,6 +321,17 @@ export function ScribeReviewWindow({
             <RefreshCw size={14} />
             <span>{working === "regenerate" ? "Regenerating" : "Regenerate"}</span>
           </button>
+          {review.contextAvailable && review.contextUsed ? (
+            <button
+              type="button"
+              onClick={() => void regenerate(undefined, "", false)}
+              disabled={working !== null}
+              title="Create another draft without nearby editor text"
+            >
+              <FileText size={14} />
+              <span>Without context</span>
+            </button>
+          ) : null}
         </span>
         <button
           type="button"

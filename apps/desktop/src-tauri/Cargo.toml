@@ -43,6 +43,11 @@ zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
+windows = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_UI_Accessibility",
+] }
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",

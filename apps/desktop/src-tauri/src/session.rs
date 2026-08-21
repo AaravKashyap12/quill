@@ -14,6 +14,7 @@ use crate::model::{
     TranscriptionProvider,
 };
 use crate::recovery;
+#[cfg(test)]
 use crate::register::Register;
 use crate::streaming::{LocalAgreement, TimedWord};
 use crate::transcription::TranscriptionRuntime;
@@ -435,6 +436,7 @@ struct ActiveSession {
     mode: Mode,
     settings: AppSettings,
     target: injection::InsertionTarget,
+    scribe_context: crate::scribe_context::CapturedScribeContext,
     audio: AudioCapture,
     started: Instant,
     last_pass: Instant,
@@ -464,6 +466,14 @@ impl ActiveSession {
         let target = match carried_target {
             Some(target) => target,
             None => injection::capture_target()?,
+        };
+        let scribe_context = if mode == Mode::Scribe {
+            crate::scribe_context::CapturedScribeContext::capture(&settings, &target)
+        } else {
+            crate::scribe_context::CapturedScribeContext::empty(
+                crate::register::resolve_target_app(&target),
+                false,
+            )
         };
         let audio = AudioCapture::start(settings.audio_input_device.as_deref())?;
         let meter_running = Arc::new(AtomicBool::new(true));
@@ -507,6 +517,7 @@ impl ActiveSession {
             mode,
             settings,
             target,
+            scribe_context,
             audio,
             started: Instant::now(),
             last_pass: Instant::now(),
@@ -838,9 +849,8 @@ impl ActiveSession {
         if !pass.words.is_empty() {
             let source_words = &pass.words;
             let source = render_words(source_words);
-            let detected_register = crate::register::resolve(&self.target);
-            let register =
-                resolve_scribe_register(detected_register, self.settings.default_register);
+            let register = self.scribe_context.register(self.settings.default_register);
+            let request = self.scribe_context.request(&source, &self.settings);
             let uses_gemini = self.settings.cleanup_provider == CleanupProvider::Gemini;
             crate::review::update_processing(
                 app,
@@ -866,10 +876,9 @@ impl ActiveSession {
                 None,
             );
             let cleanup_started = Instant::now();
-            let (cleaned, warning, cleanup_outcome) = match cleanup::clean(
+            let (cleaned, warning, cleanup_outcome) = match cleanup::clean_request(
                 &self.settings,
-                &source,
-                register,
+                &request,
             )
             .await
             {
@@ -918,6 +927,7 @@ impl ActiveSession {
                     register,
                     settings: self.settings.clone(),
                     target: self.target.clone(),
+                    context: self.scribe_context.clone(),
                 },
             )?;
             self.review_opened = true;
@@ -1100,6 +1110,7 @@ impl Drop for ActiveSession {
     }
 }
 
+#[cfg(test)]
 fn resolve_scribe_register(detected: Register, default_register: Register) -> Register {
     match detected {
         Register::Generic => default_register,

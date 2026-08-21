@@ -1,3 +1,4 @@
+use super::EditorTextContext;
 use anyhow::{anyhow, Result};
 use core_foundation::base::TCFType;
 use core_foundation::boolean::CFBoolean;
@@ -11,6 +12,20 @@ use std::time::Duration;
 type CGEventRef = *mut c_void;
 type CGEventSourceRef = *mut c_void;
 type CGKeyCode = u16;
+type AXUIElementRef = *mut c_void;
+type AXValueRef = *const c_void;
+type CFTypeRef = *const c_void;
+type CFTypeID = usize;
+type AXError = i32;
+const AX_VALUE_CF_RANGE_TYPE: i32 = 4;
+const AX_ERROR_SUCCESS: AXError = 0;
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct NativeCFRange {
+    location: isize,
+    length: isize,
+}
 const HID_EVENT_TAP: u32 = 0;
 const KEY_COMMAND: CGKeyCode = 55;
 const KEY_V: CGKeyCode = 9;
@@ -32,6 +47,16 @@ extern "C" {
     ) -> CGEventRef;
     fn CGEventPost(tap: u32, event: CGEventRef);
     fn CFRelease(value: *const c_void);
+    fn CFGetTypeID(value: CFTypeRef) -> CFTypeID;
+    fn CFStringGetTypeID() -> CFTypeID;
+    fn AXValueGetType(value: AXValueRef) -> i32;
+    fn AXValueGetValue(value: AXValueRef, value_type: i32, value_ptr: *mut c_void) -> bool;
+    fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
+    fn AXUIElementCopyAttributeValue(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        value: *mut CFTypeRef,
+    ) -> AXError;
 }
 
 pub fn request_accessibility_permission() -> bool {
@@ -56,10 +81,147 @@ pub fn capture_target() -> Result<InsertionTarget> {
     Ok(InsertionTarget { process_id })
 }
 
+unsafe fn copy_attribute(element: AXUIElementRef, name: &str) -> Option<CFTypeRef> {
+    let attribute = CFString::new(name);
+    let mut value: CFTypeRef = std::ptr::null();
+    (AXUIElementCopyAttributeValue(element, attribute.as_concrete_TypeRef(), &mut value)
+        == AX_ERROR_SUCCESS
+        && !value.is_null())
+    .then_some(value)
+}
+
+unsafe fn copy_string_attribute(element: AXUIElementRef, name: &str) -> Option<String> {
+    let value = copy_attribute(element, name)?;
+    if CFGetTypeID(value) != CFStringGetTypeID() {
+        CFRelease(value);
+        return None;
+    }
+    Some(CFString::wrap_under_create_rule(value as CFStringRef).to_string())
+}
+
+unsafe fn focused_element(target: &InsertionTarget) -> Option<AXUIElementRef> {
+    let application = AXUIElementCreateApplication(target.process_id);
+    if application.is_null() {
+        return None;
+    }
+    let focused =
+        copy_attribute(application, "AXFocusedUIElement").map(|value| value as AXUIElementRef);
+    CFRelease(application);
+    focused
+}
+
+unsafe fn selected_range(element: AXUIElementRef) -> Option<NativeCFRange> {
+    let value = copy_attribute(element, "AXSelectedTextRange")?;
+    let mut range = NativeCFRange::default();
+    let valid = AXValueGetType(value as AXValueRef) == AX_VALUE_CF_RANGE_TYPE
+        && AXValueGetValue(
+            value as AXValueRef,
+            AX_VALUE_CF_RANGE_TYPE,
+            &mut range as *mut NativeCFRange as *mut c_void,
+        );
+    CFRelease(value);
+    valid.then_some(range)
+}
+
+fn utf16_index_to_byte(value: &str, utf16_index: usize) -> usize {
+    let mut units = 0usize;
+    for (byte_index, character) in value.char_indices() {
+        if units >= utf16_index {
+            return byte_index;
+        }
+        units += character.len_utf16();
+    }
+    value.len()
+}
+
+fn bounded_before(value: &str, caret_byte: usize, max_chars: usize) -> Option<String> {
+    let prefix = &value[..caret_byte.min(value.len())];
+    let start = prefix
+        .char_indices()
+        .rev()
+        .nth(max_chars.saturating_sub(1))
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    let result = prefix[start..].to_owned();
+    (!result.trim().is_empty()).then_some(result)
+}
+
+fn bounded_after(value: &str, caret_byte: usize, max_chars: usize) -> Option<String> {
+    let suffix = &value[caret_byte.min(value.len())..];
+    let end = suffix
+        .char_indices()
+        .nth(max_chars)
+        .map(|(index, _)| index)
+        .unwrap_or(suffix.len());
+    let result = suffix[..end].to_owned();
+    (!result.trim().is_empty()).then_some(result)
+}
+
+pub fn capture_editor_context(
+    target: &InsertionTarget,
+    max_context_chars: i32,
+) -> Result<Option<EditorTextContext>> {
+    if !target_is_foreground(target) {
+        return Ok(None);
+    }
+    let Some(element) = (unsafe { focused_element(target) }) else {
+        return Ok(None);
+    };
+    let result = unsafe {
+        let role = copy_string_attribute(element, "AXRole").unwrap_or_default();
+        if role.contains("Secure") {
+            CFRelease(element);
+            return Ok(None);
+        }
+        let selected_text = copy_string_attribute(element, "AXSelectedText")
+            .filter(|value| !value.trim().is_empty());
+        let full_value = copy_string_attribute(element, "AXValue");
+        let range = selected_range(element);
+        CFRelease(element);
+
+        let max_chars = max_context_chars.max(1) as usize;
+        let (surrounding_before, surrounding_after) = match (full_value, range) {
+            (Some(value), Some(range)) if range.location >= 0 && range.length >= 0 => {
+                let start = utf16_index_to_byte(&value, range.location as usize);
+                let end = utf16_index_to_byte(
+                    &value,
+                    range.location.saturating_add(range.length) as usize,
+                );
+                (
+                    bounded_before(&value, start, max_chars),
+                    bounded_after(&value, end, max_chars),
+                )
+            }
+            _ => (None, None),
+        };
+        EditorTextContext {
+            selected_text,
+            surrounding_before,
+            surrounding_after,
+        }
+    };
+    Ok(Some(result))
+}
+
+pub fn selected_text_matches(target: &InsertionTarget, expected: &str) -> Result<bool> {
+    activate_target(target)?;
+    Ok(
+        capture_editor_context(target, expected.chars().count().max(1) as i32)?
+            .and_then(|context| context.selected_text)
+            .is_some_and(|selection| selection == expected),
+    )
+}
+
 fn running_application(
     target: &InsertionTarget,
 ) -> Option<objc2::rc::Retained<NSRunningApplication>> {
     NSRunningApplication::runningApplicationWithProcessIdentifier(target.process_id)
+}
+
+pub fn bundle_identifier(target: &InsertionTarget) -> Option<String> {
+    running_application(target)
+        .and_then(|application| application.bundleIdentifier())
+        .map(|identifier| identifier.to_string())
 }
 
 pub fn target_is_foreground(target: &InsertionTarget) -> bool {

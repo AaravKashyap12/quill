@@ -440,6 +440,11 @@ export function App() {
               "Hi Jordan,\n\n5 PM tomorrow works for me. You can use my calendar link to schedule it.\n\nTalk soon.",
             warning: null,
             register: "email" as const,
+            action: "compose" as const,
+            contextLabel: "Gmail · Compose using nearby text",
+            contextAvailable: true,
+            contextUsed: true,
+            targetApp: "Gmail",
           }
         : null;
     return (

@@ -11,6 +11,73 @@ pub enum Register {
     Generic,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TargetApp {
+    Gmail,
+    Outlook,
+    Slack,
+    Discord,
+    Teams,
+    Whatsapp,
+    Chatgpt,
+    Claude,
+    Gemini,
+    Copilot,
+    Perplexity,
+    Notion,
+    Obsidian,
+    Word,
+    Notepad,
+    Code,
+    Cursor,
+    Terminal,
+    Generic,
+}
+
+impl TargetApp {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Gmail => "Gmail",
+            Self::Outlook => "Outlook",
+            Self::Slack => "Slack",
+            Self::Discord => "Discord",
+            Self::Teams => "Teams",
+            Self::Whatsapp => "WhatsApp",
+            Self::Chatgpt => "ChatGPT",
+            Self::Claude => "Claude",
+            Self::Gemini => "Gemini",
+            Self::Copilot => "Copilot",
+            Self::Perplexity => "Perplexity",
+            Self::Notion => "Notion",
+            Self::Obsidian => "Obsidian",
+            Self::Word => "Word",
+            Self::Notepad => "Notepad",
+            Self::Code => "Visual Studio Code",
+            Self::Cursor => "Cursor",
+            Self::Terminal => "Terminal",
+            Self::Generic => "Current app",
+        }
+    }
+
+    pub fn register(self) -> Register {
+        match self {
+            Self::Gmail | Self::Outlook => Register::Email,
+            Self::Slack | Self::Discord | Self::Teams | Self::Whatsapp => Register::Chat,
+            Self::Chatgpt
+            | Self::Claude
+            | Self::Gemini
+            | Self::Copilot
+            | Self::Perplexity
+            | Self::Code
+            | Self::Cursor
+            | Self::Terminal => Register::Prompt,
+            Self::Notion | Self::Obsidian | Self::Word | Self::Notepad => Register::Notes,
+            Self::Generic => Register::Generic,
+        }
+    }
+}
+
 #[cfg(any(windows, test))]
 const BROWSERS: &[&str] = &[
     "chrome", "msedge", "firefox", "brave", "arc", "opera", "vivaldi",
@@ -21,10 +88,10 @@ const BROWSERS: &[&str] = &[
 /// short-lived: classification returns only this enum, and neither signal is
 /// logged or recorded in metrics because titles can contain private subjects
 /// and document names.
-pub fn resolve(target: &InsertionTarget) -> Register {
+pub fn resolve_target_app(target: &InsertionTarget) -> TargetApp {
     #[cfg(windows)]
     {
-        classify(
+        classify_target(
             window_title(target.top_level()).as_deref(),
             process_name(target.process_id()).as_deref(),
         )
@@ -32,13 +99,54 @@ pub fn resolve(target: &InsertionTarget) -> Register {
 
     #[cfg(not(windows))]
     {
-        let _ = target;
-        Register::Generic
+        #[cfg(target_os = "macos")]
+        return classify_bundle_identifier(target.bundle_identifier().as_deref());
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = target;
+            TargetApp::Generic
+        }
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(target_os = "macos", test))]
+fn classify_bundle_identifier(bundle_identifier: Option<&str>) -> TargetApp {
+    let identifier = bundle_identifier.unwrap_or_default().to_lowercase();
+    if identifier.contains("microsoft.outlook") || identifier == "com.apple.mail" {
+        TargetApp::Outlook
+    } else if identifier.contains("slack") {
+        TargetApp::Slack
+    } else if identifier.contains("discord") {
+        TargetApp::Discord
+    } else if identifier.contains("teams") {
+        TargetApp::Teams
+    } else if identifier.contains("whatsapp") {
+        TargetApp::Whatsapp
+    } else if identifier.contains("notion") {
+        TargetApp::Notion
+    } else if identifier.contains("obsidian") {
+        TargetApp::Obsidian
+    } else if identifier.contains("microsoft.word") {
+        TargetApp::Word
+    } else if identifier.contains("visual-studio-code") || identifier.contains("vscode") {
+        TargetApp::Code
+    } else if identifier.contains("cursor") {
+        TargetApp::Cursor
+    } else if identifier.contains("terminal") || identifier.contains("iterm") {
+        TargetApp::Terminal
+    } else {
+        TargetApp::Generic
+    }
+}
+
+#[cfg(test)]
 fn classify(title: Option<&str>, process: Option<&str>) -> Register {
+    classify_target(title, process).register()
+}
+
+#[cfg(any(windows, test))]
+fn classify_target(title: Option<&str>, process: Option<&str>) -> TargetApp {
     let process = process.map(str::to_lowercase);
     let is_browser = process
         .as_deref()
@@ -49,14 +157,19 @@ fn classify(title: Option<&str>, process: Option<&str>) -> Register {
         // context. Its title is user content (for example, a filename), so it
         // must not be allowed to override the process classification.
         match process.as_deref() {
-            Some("outlook" | "thunderbird") => return Register::Email,
-            Some("slack" | "discord" | "teams") => return Register::Chat,
-            Some("code" | "cursor" | "windowsterminal" | "powershell" | "cmd" | "alacritty") => {
-                return Register::Prompt
+            Some("outlook" | "thunderbird") => return TargetApp::Outlook,
+            Some("slack") => return TargetApp::Slack,
+            Some("discord") => return TargetApp::Discord,
+            Some("teams") => return TargetApp::Teams,
+            Some("code") => return TargetApp::Code,
+            Some("cursor") => return TargetApp::Cursor,
+            Some("windowsterminal" | "powershell" | "cmd" | "alacritty") => {
+                return TargetApp::Terminal
             }
-            Some("notepad" | "winword" | "obsidian" | "notion") => {
-                return Register::Notes;
-            }
+            Some("notepad") => return TargetApp::Notepad,
+            Some("winword") => return TargetApp::Word,
+            Some("obsidian") => return TargetApp::Obsidian,
+            Some("notion") => return TargetApp::Notion,
             _ => {}
         }
     }
@@ -65,21 +178,45 @@ fn classify(title: Option<&str>, process: Option<&str>) -> Register {
     // mapping, so their title is the only useful signal available.
     if let Some(title) = title {
         let title = title.to_lowercase();
-        if contains_any(
-            &title,
-            &["claude", "chatgpt", "gemini", "copilot", "perplexity"],
-        ) {
-            return Register::Prompt;
+        if title.contains("claude") {
+            return TargetApp::Claude;
         }
-        if contains_any(&title, &["gmail", "outlook", "mail", "superhuman"]) {
-            return Register::Email;
+        if title.contains("chatgpt") {
+            return TargetApp::Chatgpt;
         }
-        if contains_any(&title, &["slack", "discord", "teams", "whatsapp"]) {
-            return Register::Chat;
+        if title.contains("gemini") {
+            return TargetApp::Gemini;
+        }
+        if title.contains("copilot") {
+            return TargetApp::Copilot;
+        }
+        if title.contains("perplexity") {
+            return TargetApp::Perplexity;
+        }
+        if title.contains("gmail") {
+            return TargetApp::Gmail;
+        }
+        if contains_any(&title, &["outlook", "mail", "superhuman"]) {
+            return TargetApp::Outlook;
+        }
+        if title.contains("slack") {
+            return TargetApp::Slack;
+        }
+        if title.contains("discord") {
+            return TargetApp::Discord;
+        }
+        if title.contains("teams") {
+            return TargetApp::Teams;
+        }
+        if title.contains("whatsapp") {
+            return TargetApp::Whatsapp;
+        }
+        if title.contains("notion") {
+            return TargetApp::Notion;
         }
     }
 
-    Register::Generic
+    TargetApp::Generic
 }
 
 #[cfg(any(windows, test))]
@@ -225,6 +362,22 @@ mod tests {
             Register::Prompt
         );
         assert_eq!(classify(None, Some("PowerShell")), Register::Prompt);
+    }
+
+    #[test]
+    fn macos_bundle_identifiers_map_without_reading_document_titles() {
+        assert_eq!(
+            classify_bundle_identifier(Some("com.tinyspeck.slackmacgap")),
+            TargetApp::Slack
+        );
+        assert_eq!(
+            classify_bundle_identifier(Some("com.microsoft.VSCode")),
+            TargetApp::Code
+        );
+        assert_eq!(
+            classify_bundle_identifier(Some("com.apple.mail")),
+            TargetApp::Outlook
+        );
     }
 
     #[test]

@@ -29,6 +29,11 @@ const demoReview: ScribeReviewDraft = {
     "Hi Jordan,\n\n5 PM tomorrow works for me. You can use my calendar link to schedule it.\n\nTalk soon.",
   warning: null,
   register: "email",
+  action: "compose",
+  contextLabel: "Gmail · Compose using nearby text",
+  contextAvailable: true,
+  contextUsed: true,
+  targetApp: "Gmail",
 };
 
 export function VoiceMotionLab() {

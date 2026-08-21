@@ -68,6 +68,13 @@ other registers do not. Every register forbids new facts, commitments, offers,
 or constraints, and the detected writing style can be changed in the review
 window to regenerate the draft.
 
+Optional nearby-text context lets Scribe compose replies from the conversation
+around the caret or rewrite selected text. It is off by default, never reads
+password fields, and always keeps the review step before insertion. With
+Gemini selected, included editor text is sent to Gemini; local cleanup keeps it
+on the device. Quill learns aggregate per-app presentation preferences from
+accepted drafts, but never stores the drafts themselves as examples.
+
 Cleanup output is never injected silently. Every Scribe activation opens a
 review window with the raw transcript and the cleaned draft side by side;
 text reaches the cursor only after you explicitly accept it (or edit it and
