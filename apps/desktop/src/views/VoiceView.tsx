@@ -12,13 +12,21 @@ import { LanguageCombobox } from "../components/LanguageCombobox";
 import { detectPlatform } from "../platform";
 import { ProviderBadge } from "../components/ProviderBadge";
 import { SettingRow } from "../components/SettingRow";
+import { Switch } from "../components/Switch";
 import {
   allLanguages,
   broadLanguages,
   englishOnly,
   majorLanguages,
 } from "../data/languages";
-import type { AppSettings, CloudProvider, ProviderKeyStatus, ProviderStatus } from "../types";
+import type {
+  AppSettings,
+  CloudProvider,
+  ProviderKeyStatus,
+  ProviderStatus,
+  StyleProfile,
+  TargetApp,
+} from "../types";
 import type { CudaRuntimeStatus } from "../types";
 import {
   cancelCudaRuntimeDownload,
@@ -343,6 +351,49 @@ type CloudFeedback = {
   message: string;
 };
 
+const styleTargets: ReadonlyArray<{ value: TargetApp; label: string }> = [
+  { value: "gmail", label: "Gmail" },
+  { value: "outlook", label: "Outlook" },
+  { value: "slack", label: "Slack" },
+  { value: "teams", label: "Microsoft Teams" },
+  { value: "discord", label: "Discord" },
+  { value: "whatsapp", label: "WhatsApp" },
+  { value: "chatgpt", label: "ChatGPT" },
+  { value: "claude", label: "Claude" },
+  { value: "gemini", label: "Gemini" },
+  { value: "copilot", label: "Microsoft Copilot" },
+  { value: "perplexity", label: "Perplexity" },
+  { value: "notion", label: "Notion" },
+  { value: "obsidian", label: "Obsidian" },
+  { value: "word", label: "Microsoft Word" },
+  { value: "notepad", label: "Notepad" },
+  { value: "code", label: "Visual Studio Code" },
+  { value: "cursor", label: "Cursor" },
+  { value: "terminal", label: "Terminal" },
+  { value: "generic", label: "Other apps" },
+];
+
+export function emptyStyleProfile(targetApp: TargetApp): StyleProfile {
+  return {
+    targetApp,
+    tone: "adaptive",
+    length: "balanced",
+    greeting: "auto",
+    signOff: "auto",
+    contractions: "auto",
+    structure: "auto",
+    learnedSamples: 0,
+    totalWords: 0,
+    greetingSamples: 0,
+    signOffSamples: 0,
+    contractionSamples: 0,
+    bulletSamples: 0,
+    paragraphSamples: 0,
+    formalSamples: 0,
+    casualSamples: 0,
+  };
+}
+
 interface VoiceViewProps {
   settings: AppSettings;
   update: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
@@ -374,8 +425,27 @@ export function VoiceView({
   const [cloudKeys, setCloudKeys] = useState<Record<CloudProvider, string>>({ groq: "", gemini: "" });
   const [cloudBusy, setCloudBusy] = useState<CloudProvider | null>(null);
   const [cloudFeedback, setCloudFeedback] = useState<Partial<Record<CloudProvider, CloudFeedback>>>({});
+  const [styleTarget, setStyleTarget] = useState<TargetApp>(
+    settings.styleProfiles[0]?.targetApp ?? "generic",
+  );
   const platform = useMemo(detectPlatform, []);
   const availableProvider = providers.find((provider) => provider.available);
+  const selectedStyleProfile = settings.styleProfiles.find(
+    (profile) => profile.targetApp === styleTarget,
+  ) ?? emptyStyleProfile(styleTarget);
+
+  function updateStyleProfile<K extends keyof StyleProfile>(key: K, value: StyleProfile[K]) {
+    const next = { ...selectedStyleProfile, [key]: value };
+    const existing = settings.styleProfiles.findIndex((profile) => profile.targetApp === styleTarget);
+    const profiles = [...settings.styleProfiles];
+    if (existing >= 0) profiles[existing] = next;
+    else profiles.push(next);
+    update("styleProfiles", profiles);
+  }
+
+  function resetStyleProfile() {
+    update("styleProfiles", settings.styleProfiles.filter((profile) => profile.targetApp !== styleTarget));
+  }
 
   const refreshInstalled = useCallback(() => {
     void listInstalledWhisperModels().then((models) => {
@@ -1421,6 +1491,63 @@ export function VoiceView({
           >
             <span className="fixed-setting">Until shortcut release</span>
           </SettingRow>
+          <SettingRow
+            label="Use nearby text"
+            description={
+              settings.cleanupProvider === "gemini"
+                ? "Optional. Selected or nearby editor text is sent to Gemini with your transcript. It stays off until you enable it."
+                : "Optional. Scribe can use selected text or nearby conversation locally. It stays off until you enable it."
+            }
+          >
+            <Switch
+              checked={settings.scribeContextEnabled}
+              onChange={(checked) => update("scribeContextEnabled", checked)}
+              label="Use nearby text in Scribe"
+            />
+          </SettingRow>
+          <div className="model-setting style-profile-setting">
+            <SettingRow
+              label="Writing style"
+              description="Scribe can keep separate, local writing preferences for each recognized app. Only aggregate choices are saved — never your text."
+            >
+              <select
+                value={styleTarget}
+                aria-label="App writing style"
+                onChange={(event) => setStyleTarget(event.target.value as TargetApp)}
+              >
+                {styleTargets.map((target) => (
+                  <option key={target.value} value={target.value}>{target.label}</option>
+                ))}
+              </select>
+            </SettingRow>
+            <details className="model-guide style-profile-guide">
+              <summary>
+                Adjust {styleTargets.find((target) => target.value === styleTarget)?.label ?? "app"} style
+                {selectedStyleProfile.learnedSamples > 0
+                  ? ` · learned from ${selectedStyleProfile.learnedSamples} accepted ${selectedStyleProfile.learnedSamples === 1 ? "draft" : "drafts"}`
+                  : " · using defaults"}
+              </summary>
+              <div className="style-profile-grid">
+                <label>Tone<select value={selectedStyleProfile.tone} onChange={(event) => updateStyleProfile("tone", event.target.value as StyleProfile["tone"])}><option value="adaptive">Adaptive</option><option value="direct">Direct</option><option value="casual">Casual</option><option value="formal">Formal</option></select></label>
+                <label>Length<select value={selectedStyleProfile.length} onChange={(event) => updateStyleProfile("length", event.target.value as StyleProfile["length"])}><option value="brief">Brief</option><option value="balanced">Balanced</option><option value="detailed">Detailed</option></select></label>
+                <label>Greeting<select value={selectedStyleProfile.greeting} onChange={(event) => updateStyleProfile("greeting", event.target.value as StyleProfile["greeting"])}><option value="auto">Automatic</option><option value="always">Include</option><option value="never">Skip</option></select></label>
+                <label>Sign-off<select value={selectedStyleProfile.signOff} onChange={(event) => updateStyleProfile("signOff", event.target.value as StyleProfile["signOff"])}><option value="auto">Automatic</option><option value="always">Include</option><option value="never">Skip</option></select></label>
+                <label>Contractions<select value={selectedStyleProfile.contractions} onChange={(event) => updateStyleProfile("contractions", event.target.value as StyleProfile["contractions"])}><option value="auto">Automatic</option><option value="always">Prefer</option><option value="never">Avoid</option></select></label>
+                <label>Structure<select value={selectedStyleProfile.structure} onChange={(event) => updateStyleProfile("structure", event.target.value as StyleProfile["structure"])}><option value="auto">Automatic</option><option value="paragraphs">Paragraphs</option><option value="bullets">Bullets</option></select></label>
+              </div>
+              <div className="style-profile-footer">
+                <span>Changes stay in Quill settings on this device.</span>
+                <button
+                  type="button"
+                  className="link-button"
+                  disabled={!settings.styleProfiles.some((profile) => profile.targetApp === styleTarget)}
+                  onClick={resetStyleProfile}
+                >
+                  Reset this app
+                </button>
+              </div>
+            </details>
+          </div>
         </div>
 
         {settings.cleanupProvider === "gemini" ? (

@@ -1,6 +1,15 @@
-use super::TargetInjection;
+use super::{EditorTextContext, TargetInjection};
 use anyhow::{anyhow, Result};
 use arboard::Clipboard;
+use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+    COINIT_APARTMENTTHREADED,
+};
+use windows::Win32::UI::Accessibility::{
+    CUIAutomation, IUIAutomation, IUIAutomationTextPattern, TextPatternRangeEndpoint_End,
+    TextPatternRangeEndpoint_Start, TextUnit_Character, UIA_TextPatternId,
+};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
@@ -94,6 +103,126 @@ fn target_handle(target: &InsertionTarget) -> HWND {
     } else {
         hwnd(target.top_level)
     }
+}
+
+struct ComApartment(bool);
+
+impl Drop for ComApartment {
+    fn drop(&mut self) {
+        if self.0 {
+            unsafe { CoUninitialize() };
+        }
+    }
+}
+
+fn enter_com_apartment() -> Result<ComApartment> {
+    let result = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    if result == RPC_E_CHANGED_MODE {
+        return Ok(ComApartment(false));
+    }
+    result.ok().map_err(|error| anyhow!(error))?;
+    Ok(ComApartment(true))
+}
+
+fn focused_text_pattern() -> Result<Option<IUIAutomationTextPattern>> {
+    let automation: IUIAutomation =
+        unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
+            .map_err(|error| anyhow!(error))?;
+    let element = unsafe { automation.GetFocusedElement() }.map_err(|error| anyhow!(error))?;
+    if unsafe { element.CurrentIsPassword() }
+        .map_err(|error| anyhow!(error))?
+        .as_bool()
+    {
+        return Ok(None);
+    }
+    match unsafe { element.GetCurrentPatternAs(UIA_TextPatternId) } {
+        Ok(pattern) => Ok(Some(pattern)),
+        Err(_) => Ok(None),
+    }
+}
+
+fn non_empty(value: String) -> Option<String> {
+    (!value.trim().is_empty()).then_some(value)
+}
+
+fn read_focused_editor_context(max_context_chars: i32) -> Result<Option<EditorTextContext>> {
+    let _apartment = enter_com_apartment()?;
+    let Some(pattern) = focused_text_pattern()? else {
+        return Ok(None);
+    };
+    let ranges = unsafe { pattern.GetSelection() }.map_err(|error| anyhow!(error))?;
+    if unsafe { ranges.Length() }.map_err(|error| anyhow!(error))? < 1 {
+        return Ok(None);
+    }
+    let selection = unsafe { ranges.GetElement(0) }.map_err(|error| anyhow!(error))?;
+    let selected_text = unsafe { selection.GetText(max_context_chars) }
+        .map_err(|error| anyhow!(error))?
+        .to_string();
+
+    // Build two bounded ranges from the selection endpoints. Moving by UIA
+    // Character units means Quill never asks the provider for the full
+    // document, even when the editor contains a very large file or thread.
+    let before = unsafe { selection.Clone() }.map_err(|error| anyhow!(error))?;
+    unsafe {
+        before.MoveEndpointByRange(
+            TextPatternRangeEndpoint_End,
+            &selection,
+            TextPatternRangeEndpoint_Start,
+        )?;
+        before.MoveEndpointByUnit(
+            TextPatternRangeEndpoint_Start,
+            TextUnit_Character,
+            -max_context_chars,
+        )?;
+    }
+    let before_text = unsafe { before.GetText(max_context_chars) }
+        .map_err(|error| anyhow!(error))?
+        .to_string();
+
+    let after = unsafe { selection.Clone() }.map_err(|error| anyhow!(error))?;
+    unsafe {
+        after.MoveEndpointByRange(
+            TextPatternRangeEndpoint_Start,
+            &selection,
+            TextPatternRangeEndpoint_End,
+        )?;
+        after.MoveEndpointByUnit(
+            TextPatternRangeEndpoint_End,
+            TextUnit_Character,
+            max_context_chars,
+        )?;
+    }
+    let after_text = unsafe { after.GetText(max_context_chars) }
+        .map_err(|error| anyhow!(error))?
+        .to_string();
+
+    Ok(Some(EditorTextContext {
+        selected_text: non_empty(selected_text),
+        surrounding_before: non_empty(before_text),
+        surrounding_after: non_empty(after_text),
+    }))
+}
+
+pub fn capture_editor_context(
+    target: &InsertionTarget,
+    max_context_chars: i32,
+) -> Result<Option<EditorTextContext>> {
+    if !target_is_foreground(target) {
+        return Ok(None);
+    }
+    read_focused_editor_context(max_context_chars.max(1))
+}
+
+pub fn selected_text_matches(target: &InsertionTarget, expected: &str) -> Result<bool> {
+    if !target_is_available(target) {
+        return Ok(false);
+    }
+    unsafe { SetForegroundWindow(hwnd(target.top_level)) };
+    std::thread::sleep(std::time::Duration::from_millis(55));
+    let context = read_focused_editor_context(expected.chars().count().max(1) as i32)?;
+    Ok(context
+        .and_then(|value| value.selected_text)
+        .is_some_and(|selected| selected == expected))
 }
 
 /// `WM_PASTE` is the only background insertion attempt we make. It addresses

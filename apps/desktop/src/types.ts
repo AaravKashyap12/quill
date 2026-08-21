@@ -1,5 +1,26 @@
 export type Mode = "dictation" | "scribe";
 export type Register = "email" | "chat" | "prompt" | "notes" | "generic";
+export type ScribeAction = "compose" | "reply" | "rewrite";
+export type TargetApp =
+  | "gmail"
+  | "outlook"
+  | "slack"
+  | "discord"
+  | "teams"
+  | "whatsapp"
+  | "chatgpt"
+  | "claude"
+  | "gemini"
+  | "copilot"
+  | "perplexity"
+  | "notion"
+  | "obsidian"
+  | "word"
+  | "notepad"
+  | "code"
+  | "cursor"
+  | "terminal"
+  | "generic";
 export type NavigationSection = "general" | "voice" | "dictionary" | "about";
 
 export interface HotkeyConfig {
@@ -18,6 +39,25 @@ export interface DictionaryEntry {
 export interface DictionarySuggestion {
   spoken: string;
   replacement: string;
+}
+
+export interface StyleProfile {
+  targetApp: TargetApp;
+  tone: "adaptive" | "formal" | "casual" | "direct";
+  length: "brief" | "balanced" | "detailed";
+  greeting: "auto" | "always" | "never";
+  signOff: "auto" | "always" | "never";
+  contractions: "auto" | "always" | "never";
+  structure: "auto" | "paragraphs" | "bullets";
+  learnedSamples: number;
+  totalWords: number;
+  greetingSamples: number;
+  signOffSamples: number;
+  contractionSamples: number;
+  bulletSamples: number;
+  paragraphSamples: number;
+  formalSamples: number;
+  casualSamples: number;
 }
 
 export interface AppSettings {
@@ -41,6 +81,8 @@ export interface AppSettings {
   speechModelSetupAttempted: boolean;
   scribeSetupDismissed: boolean;
   onboardingCompleted: boolean;
+  scribeContextEnabled: boolean;
+  styleProfiles: StyleProfile[];
 }
 
 export type CloudProvider = "groq" | "gemini";
@@ -97,6 +139,11 @@ export interface ScribeReviewDraft {
   draft: string;
   warning: string | null;
   register: Register;
+  action: ScribeAction;
+  contextLabel: string;
+  contextAvailable: boolean;
+  contextUsed: boolean;
+  targetApp: string;
 }
 
 export interface RecoveryManifest {

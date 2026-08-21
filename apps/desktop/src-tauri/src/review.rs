@@ -3,6 +3,7 @@ use crate::injection::{self, TargetInjection};
 use crate::model::{AppSettings, DictionarySuggestion, InjectionMode};
 use crate::recovery;
 use crate::register::Register;
+use crate::scribe_context::CapturedScribeContext;
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,6 +26,8 @@ struct ReviewSession {
     register: Register,
     settings: AppSettings,
     target: injection::InsertionTarget,
+    context: CapturedScribeContext,
+    context_used: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -35,6 +38,11 @@ pub struct ReviewPayload {
     draft: String,
     warning: Option<String>,
     register: Register,
+    action: cleanup::ScribeAction,
+    context_label: String,
+    context_available: bool,
+    context_used: bool,
+    target_app: String,
 }
 
 pub struct ReviewRequest {
@@ -45,6 +53,7 @@ pub struct ReviewRequest {
     pub register: Register,
     pub settings: AppSettings,
     pub target: injection::InsertionTarget,
+    pub context: CapturedScribeContext,
 }
 
 impl ReviewSession {
@@ -55,6 +64,11 @@ impl ReviewSession {
             draft: self.draft.clone(),
             warning: self.warning.clone(),
             register: self.register,
+            action: self.context.action,
+            context_label: self.context.context_label(),
+            context_available: self.context.has_nearby_text(),
+            context_used: self.context_used,
+            target_app: self.context.target_app.label().to_owned(),
         }
     }
 }
@@ -86,6 +100,8 @@ pub fn present(app: &AppHandle, request: ReviewRequest) -> Result<()> {
         register: request.register,
         settings: request.settings,
         target: request.target,
+        context_used: request.context.has_nearby_text(),
+        context: request.context,
     };
     let payload = session.payload();
     *store
@@ -119,8 +135,9 @@ pub async fn regenerate_scribe_review(
     state: State<'_, ReviewStore>,
     register: Option<Register>,
     instruction: Option<String>,
+    use_context: Option<bool>,
 ) -> Result<ReviewPayload, String> {
-    let (id, source, settings, selected_register) = {
+    let (id, source, settings, selected_register, context) = {
         let current = state
             .current
             .lock()
@@ -133,8 +150,16 @@ pub async fn regenerate_scribe_review(
             session.source.clone(),
             session.settings.clone(),
             register.unwrap_or(session.register),
+            if use_context.unwrap_or(session.context_used) {
+                session.context.clone()
+            } else {
+                session.context.without_nearby_text()
+            },
         )
     };
+
+    let mut request = context.request(&source, &settings);
+    request.register = selected_register;
 
     let regenerated = match instruction
         .as_deref()
@@ -142,10 +167,9 @@ pub async fn regenerate_scribe_review(
         .filter(|value| !value.is_empty())
     {
         Some(instruction) => {
-            cleanup::clean_with_instruction(&settings, &source, selected_register, instruction)
-                .await
+            cleanup::clean_request_with_instruction(&settings, &request, instruction).await
         }
-        None => cleanup::clean(&settings, &source, selected_register).await,
+        None => cleanup::clean_request(&settings, &request).await,
     };
     let payload = {
         let mut current = state
@@ -157,6 +181,7 @@ pub async fn regenerate_scribe_review(
             .filter(|session| session.id == id)
             .ok_or_else(|| "This Scribe draft is no longer active".to_owned())?;
         session.register = selected_register;
+        session.context_used = context.has_nearby_text();
         match regenerated {
             Ok(draft) => {
                 session.draft = draft;
@@ -193,6 +218,31 @@ pub fn accept_scribe_review(
         .map_err(|_| "Scribe review state was poisoned".to_owned())?
         .take()
         .ok_or_else(|| "There is no active Scribe draft".to_owned())?;
+    if session.context.action == cleanup::ScribeAction::Rewrite {
+        let expected = session
+            .context
+            .selected_text
+            .as_deref()
+            .ok_or_else(|| "The selected text is no longer available".to_owned())?;
+        match injection::selected_text_matches(&session.target, expected) {
+            Ok(true) => {}
+            Ok(false) => {
+                restore_session(&state, session);
+                refocus_review(&app);
+                return Err(
+                    "The selected text changed after Scribe started. Quill kept your draft and did not replace anything."
+                        .to_owned(),
+                );
+            }
+            Err(error) => {
+                restore_session(&state, session);
+                refocus_review(&app);
+                return Err(format!(
+                    "Quill could not verify the original selection, so nothing was replaced: {error}"
+                ));
+            }
+        }
+    }
     let mut insertion = trimmed.to_owned();
     insertion.push(' ');
     let use_clipboard = matches!(session.settings.injection_mode, InjectionMode::Clipboard);
@@ -202,6 +252,16 @@ pub fn accept_scribe_review(
 
     match injection::inject_review_text(&session.target, &insertion, use_clipboard) {
         Ok(TargetInjection::Inserted) => {
+            // Learn only from a user's edit. Treating an untouched model draft
+            // as preference evidence would reinforce the model's own defaults.
+            if style_edit_was_user_authored(&session.draft, trimmed) {
+                if let Ok(mut settings) = app.state::<crate::QuillState>().settings.write() {
+                    settings.learn_style_profile(session.context.target_app, trimmed);
+                    if let Err(error) = crate::settings::save(&settings) {
+                        tracing::warn!(%error, "could not persist aggregate Scribe style preferences");
+                    }
+                }
+            }
             clear_review_recovery(&session.recovery_id);
             emit_runtime_status(&app, "ready", "Scribe draft inserted");
             Ok(suggestion)
@@ -227,6 +287,10 @@ pub fn accept_scribe_review(
             ))
         }
     }
+}
+
+fn style_edit_was_user_authored(draft: &str, accepted: &str) -> bool {
+    draft.trim() != accepted.trim()
 }
 
 fn qualify_dictionary_suggestion(
@@ -345,6 +409,18 @@ fn emit_runtime_status(app: &AppHandle, state: &str, message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn untouched_model_drafts_do_not_become_style_training_signals() {
+        assert!(!style_edit_was_user_authored(
+            "A polished model draft.",
+            "  A polished model draft.  "
+        ));
+        assert!(style_edit_was_user_authored(
+            "A polished model draft.",
+            "A shorter draft."
+        ));
+    }
     use crate::model::{DictionaryEntry, DictionaryKind};
 
     fn candidate(

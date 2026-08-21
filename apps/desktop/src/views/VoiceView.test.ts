@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   cleanupModelLabel,
   cleanupTiers,
+  emptyStyleProfile,
   modelsForLanguage,
   preferredModelForLanguage,
 } from "./VoiceView";
@@ -56,6 +57,18 @@ describe("Whisper model filtering", () => {
 });
 
 describe("Scribe cleanup choices", () => {
+  it("creates an editable per-app profile without storing writing samples", () => {
+    const profile = emptyStyleProfile("slack");
+
+    expect(profile).toMatchObject({
+      targetApp: "slack",
+      tone: "adaptive",
+      length: "balanced",
+      learnedSamples: 0,
+    });
+    expect(JSON.stringify(profile)).not.toContain("acceptedText");
+  });
+
   it("offers only the two evaluated recommendations with explicit requirements", () => {
     expect(cleanupTiers.map((tier) => tier.name)).toEqual([
       "TurboSpeak 1.7B",

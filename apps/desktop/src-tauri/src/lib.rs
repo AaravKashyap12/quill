@@ -13,6 +13,7 @@ mod ollama;
 mod recovery;
 mod register;
 mod review;
+mod scribe_context;
 mod session;
 mod settings;
 mod streaming;

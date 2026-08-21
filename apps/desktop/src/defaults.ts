@@ -32,6 +32,8 @@ export const defaultSettings: AppSettings = {
   speechModelSetupAttempted: false,
   scribeSetupDismissed: false,
   onboardingCompleted: false,
+  scribeContextEnabled: false,
+  styleProfiles: [],
 };
 
 export const initialRuntimeStatus: RuntimeStatus = {
