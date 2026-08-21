@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 const SERVICE: &str = "com.quill.desktop.cloud-providers";
-const GROQ_STATUS_URL: &str = "https://api.groq.com/openai/v1/models/whisper-large-v3-turbo";
+const GROQ_STATUS_URL: &str = "https://api.groq.com/openai/v1/models/whisper-large-v3";
 pub(crate) const GEMINI_MODEL: &str = "gemini-3.1-flash-lite";
 static CLOUD_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -196,6 +196,11 @@ mod tests {
         let _first = cloud_client().unwrap();
         assert!(CLOUD_CLIENT.get().is_some());
         let _second = cloud_client().unwrap();
+    }
+
+    #[test]
+    fn groq_connection_test_targets_the_transcription_model() {
+        assert!(GROQ_STATUS_URL.ends_with("/models/whisper-large-v3"));
     }
 
     /// Run this and `credential_probe_read_after_process_restart_and_delete`

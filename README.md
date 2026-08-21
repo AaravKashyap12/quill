@@ -284,7 +284,7 @@ issues should follow [SECURITY.md](SECURITY.md).
 
 [GNU AGPL-3.0-or-later](LICENSE)
 Cloud processing is always opt-in. Groq transcription uses
-`whisper-large-v3-turbo` and uploads the completed recording only after the
+`whisper-large-v3` and uploads the completed recording only after the
 shortcut is released; it does not type live. Gemini Scribe uses
 `gemini-3.1-flash-lite` and receives transcript text, never audio. API keys are
 stored in Windows Credential Manager or macOS Keychain rather than in Quill's

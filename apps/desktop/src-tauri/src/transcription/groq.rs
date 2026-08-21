@@ -10,7 +10,7 @@ use serde::Deserialize;
 use std::time::{Duration, Instant};
 
 const ENDPOINT: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
-const MODEL: &str = "whisper-large-v3-turbo";
+const MODEL: &str = "whisper-large-v3";
 const MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
 const GROQ_REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -303,5 +303,10 @@ mod tests {
             http_outcome(reqwest::StatusCode::SERVICE_UNAVAILABLE),
             "providerFailure"
         );
+    }
+
+    #[test]
+    fn groq_uses_the_accuracy_focused_whisper_model() {
+        assert_eq!(MODEL, "whisper-large-v3");
     }
 }
