@@ -1,7 +1,14 @@
-import type { SystemProfile } from "./types";
+import type { AppSettings, SystemProfile } from "./types";
 
 export type SetupLanguage = "english" | "multilingual";
 export type SetupPriority = "fast" | "balanced" | "accurate";
+export type SetupSpeechRoute = "local" | "groq";
+export type SetupScribeRoute = "disabled" | "local" | "gemini";
+
+export interface SetupDataPath {
+  audio: string;
+  transcript: string;
+}
 
 export interface RecommendedModel {
   id: string;
@@ -92,4 +99,30 @@ export function recommendSpeechModel(
 export function modelDownloadBytes(id: string): number {
   const tier = id.replace(/\.en$/, "") as keyof typeof MODEL_BYTES;
   return MODEL_BYTES[tier] ?? 0;
+}
+
+export function cleanupProviderForSetup(
+  route: SetupScribeRoute,
+): AppSettings["cleanupProvider"] {
+  if (route === "gemini") return "gemini";
+  if (route === "disabled") return "disabled";
+  return "auto";
+}
+
+export function describeSetupPath(
+  speech: SetupSpeechRoute,
+  scribe: SetupScribeRoute,
+): SetupDataPath {
+  return {
+    audio:
+      speech === "groq"
+        ? "Sent to Groq after you finish"
+        : "Processed on this device",
+    transcript:
+      scribe === "gemini"
+        ? "Sent to Gemini for Scribe"
+        : scribe === "local"
+          ? "Refined on this device"
+          : "No Scribe cleanup",
+  };
 }

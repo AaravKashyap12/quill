@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { recommendSpeechModel } from "./onboarding";
+import {
+  cleanupProviderForSetup,
+  describeSetupPath,
+  recommendSpeechModel,
+} from "./onboarding";
 import type { SystemProfile } from "./types";
 
 const GIB = 1024 ** 3;
@@ -43,5 +47,27 @@ describe("first-run speech model recommendation", () => {
 
   it("honours the fast preference on accelerated hardware", () => {
     expect(recommendSpeechModel(profile(64, 48, 24, "cuda"), "english", "fast").id).toBe("base.en");
+  });
+});
+
+describe("first-run provider choices", () => {
+  it("maps setup choices to persisted cleanup providers", () => {
+    expect(cleanupProviderForSetup("disabled")).toBe("disabled");
+    expect(cleanupProviderForSetup("local")).toBe("auto");
+    expect(cleanupProviderForSetup("gemini")).toBe("gemini");
+  });
+
+  it("describes local and cloud data paths without implying hidden uploads", () => {
+    expect(describeSetupPath("local", "local")).toEqual({
+      audio: "Processed on this device",
+      transcript: "Refined on this device",
+    });
+    expect(describeSetupPath("groq", "gemini")).toEqual({
+      audio: "Sent to Groq after you finish",
+      transcript: "Sent to Gemini for Scribe",
+    });
+    expect(describeSetupPath("groq", "disabled").transcript).toBe(
+      "No Scribe cleanup",
+    );
   });
 });

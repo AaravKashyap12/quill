@@ -905,7 +905,9 @@ export function VoiceView({
                 ? "Sent to Gemini for Scribe"
                 : settings.cleanupProvider === "disabled"
                   ? "No Scribe cleanup"
-                  : "Refined on this device"}
+                  : availableProvider
+                    ? "Refined on this device"
+                    : "Local Scribe not configured"}
             </dd>
           </div>
         </dl>

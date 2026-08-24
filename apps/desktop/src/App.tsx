@@ -23,7 +23,12 @@ import { RecoveryBanner } from "./components/RecoveryBanner";
 import { ScribeReviewWindow } from "./components/ScribeReviewWindow";
 import { Onboarding } from "./components/Onboarding";
 import { defaultSettings, initialRuntimeStatus } from "./defaults";
-import { modelDownloadBytes } from "./onboarding";
+import {
+  cleanupProviderForSetup,
+  modelDownloadBytes,
+  type SetupScribeRoute,
+  type SetupSpeechRoute,
+} from "./onboarding";
 import {
   detectProviders,
   downloadWhisperModel,
@@ -33,10 +38,12 @@ import {
   loadSettings,
   persistSettings,
   previewMode,
+  setProviderKey,
   testProviderConnection,
 } from "./tauri";
 import type {
   AppSettings,
+  CloudProvider,
   HotkeyConfig,
   Mode,
   NavigationSection,
@@ -134,7 +141,7 @@ export function App() {
           bytesTotal: 0,
           error: null,
         });
-        setOnboardingRequired(false);
+        setOnboardingRequired(!loaded.onboardingCompleted);
         setInitialising(false);
         return;
       }
@@ -339,6 +346,7 @@ export function App() {
       ...savedSettings.current,
       language,
       whisperModel: modelId,
+      transcriptionProvider: "local" as const,
       speechModelSetupAttempted: true,
     };
     await persistSettings(next);
@@ -361,25 +369,65 @@ export function App() {
     if (openScribe) openVoiceSetup("scribe");
   }
 
-  async function useGroqFromOnboarding() {
+  async function chooseOnboardingProviders(
+    speech: SetupSpeechRoute,
+    scribe: SetupScribeRoute,
+  ) {
     const next: AppSettings = {
       ...savedSettings.current,
-      transcriptionProvider: "groq",
-      speechModelSetupAttempted: true,
-      onboardingCompleted: true,
+      transcriptionProvider: speech,
+      cleanupProvider: cleanupProviderForSetup(scribe),
+      speechModelSetupAttempted:
+        speech === "groq" || savedSettings.current.speechModelSetupAttempted,
     };
     await persistSettings(next);
     savedSettings.current = next;
     setSettings(next);
-    setSpeechSetup({
-      phase: "missing",
-      modelId: "Groq Cloud",
-      bytesDownloaded: 0,
-      bytesTotal: 0,
-      error: "Connect a Groq API key to finish speech setup.",
-    });
-    setOnboardingRequired(false);
-    setSection("voice");
+    if (speech === "groq") {
+      const groq = cloudStatuses.find((status) => status.provider === "groq");
+      setSpeechSetup({
+        phase: groq?.status === "connected" ? "ready" : "missing",
+        modelId: "Groq Cloud",
+        bytesDownloaded: 0,
+        bytesTotal: 0,
+        error:
+          groq?.status === "connected"
+            ? null
+            : "Connect a Groq API key to finish speech setup.",
+      });
+    } else {
+      const installed = await listInstalledWhisperModels();
+      const modelId = next.whisperModel || (next.language === "en" ? "base.en" : "base");
+      setSpeechSetup({
+        phase: installed.includes(modelId) ? "ready" : "missing",
+        modelId,
+        bytesDownloaded: 0,
+        bytesTotal: modelDownloadBytes(modelId) || FALLBACK_MODEL_BYTES,
+        error: null,
+      });
+    }
+  }
+
+  async function connectOnboardingCloud(
+    provider: CloudProvider,
+    key?: string,
+  ): Promise<ProviderKeyStatus> {
+    if (key?.trim()) await setProviderKey(provider, key.trim());
+    const tested = await testProviderConnection(provider);
+    setCloudStatuses((current) => [
+      ...current.filter((status) => status.provider !== provider),
+      tested,
+    ]);
+    if (provider === "groq" && tested.status === "connected") {
+      setSpeechSetup({
+        phase: "ready",
+        modelId: "Groq Cloud",
+        bytesDownloaded: 0,
+        bytesTotal: 0,
+        error: null,
+      });
+    }
+    return tested;
   }
 
   function openVoiceSetup(target: "speech" | "scribe") {
@@ -474,9 +522,11 @@ export function App() {
         profile={systemProfile}
         speech={speechSetup}
         scribeReady={scribeReady}
+        cloudStatuses={cloudStatuses}
+        onChooseProviders={chooseOnboardingProviders}
         onStartSpeech={startOnboardingSpeech}
         onRetrySpeech={() => void startSpeechDownload()}
-        onUseGroq={useGroqFromOnboarding}
+        onConnectCloud={connectOnboardingCloud}
         onFinish={finishOnboarding}
       />
     );
