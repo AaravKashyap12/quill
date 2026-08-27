@@ -1,6 +1,6 @@
 use crate::cleanup;
 use crate::injection::{self, TargetInjection};
-use crate::model::{AppSettings, DictionarySuggestion, InjectionMode};
+use crate::model::{AppSettings, DictionarySuggestion};
 use crate::recovery;
 use crate::register::Register;
 use crate::scribe_context::CapturedScribeContext;
@@ -245,12 +245,11 @@ pub fn accept_scribe_review(
     }
     let mut insertion = trimmed.to_owned();
     insertion.push(' ');
-    let use_clipboard = matches!(session.settings.injection_mode, InjectionMode::Clipboard);
     // The candidate exists only for this successful review acceptance. It is
     // never traced or measured; only an explicit Add or Dismiss persists it.
     let suggestion = qualify_dictionary_suggestion(&session.draft, trimmed, &session.settings);
 
-    match injection::inject_review_text(&session.target, &insertion, use_clipboard) {
+    match injection::inject_review_text(&session.target, &insertion) {
         Ok(TargetInjection::Inserted) => {
             // Learn only from a user's edit. Treating an untouched model draft
             // as preference evidence would reinforce the model's own defaults.

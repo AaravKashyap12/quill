@@ -14,11 +14,11 @@ Quill is for privacy-conscious writers, developers, researchers, and knowledge w
 
 ## Product Purpose
 
-Quill makes local voice dictation feel immediate without forcing one cleanup behavior on every thought. Dictation mode preserves every spoken word in near real time; Scribe mode briefly waits, resolves verbal self-corrections, removes filler, and commits only the final intended wording. Success means users can move between those behaviors by muscle memory, without opening Quill.
+Quill makes local voice dictation feel immediate without forcing one cleanup behavior on every thought. Dictation mode preserves every spoken word and inserts the completed transcript when the user stops; Scribe resolves verbal self-corrections, removes filler, and presents the final intended wording for review. Success means users can move between those behaviors by muscle memory, without opening Quill.
 
 ## Positioning
 
-Two always-available hotkeys make raw transcription and self-correcting transcription equally immediate, entirely on the user's machine.
+Two always-available hotkeys make raw transcription and self-correcting transcription equally immediate. Processing stays on the user's machine by default; named cloud providers are used only after an explicit choice.
 
 ## Brand Personality
 

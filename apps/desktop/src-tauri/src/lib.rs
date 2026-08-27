@@ -208,17 +208,29 @@ async fn retry_recovery_transcription(
         .read()
         .map(|settings| settings.clone())
         .map_err(|_| "Settings are unavailable".to_owned())?;
-    let transcript = match provider.as_str() {
-        "groq" => transcription::transcribe_recovery_groq(&settings, &samples).await,
-        "local" => transcription::transcribe_recovery_local(&app, &settings, &samples).await,
-        _ => return Err("Unsupported recovery transcription provider".to_owned()),
-    }
-    .map_err(|error| error.to_string())?;
     let mode = if pending.mode == "scribe" {
         Mode::Scribe
     } else {
         Mode::Dictation
     };
+    let transcript = match provider.as_str() {
+        "groq" => transcription::transcribe_recovery_groq(&settings, &samples).await,
+        "gemini" => {
+            transcription::transcribe_recovery_gemini(
+                &settings,
+                &samples,
+                if mode == Mode::Scribe {
+                    "scribe"
+                } else {
+                    "dictation"
+                },
+            )
+            .await
+        }
+        "local" => transcription::transcribe_recovery_local(&app, &settings, &samples).await,
+        _ => return Err("Unsupported recovery transcription provider".to_owned()),
+    }
+    .map_err(|error| error.to_string())?;
     recovery::write_transcript(&id, mode, &transcript, true).map_err(|error| error.to_string())?;
     recovery::load_pending()
         .map_err(|error| error.to_string())?

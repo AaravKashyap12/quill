@@ -67,7 +67,7 @@ export interface AppSettings {
   whisperModel: string;
   backend: "auto" | "cpu" | "cuda" | "metal";
   language: string;
-  transcriptionProvider: "local" | "groq";
+  transcriptionProvider: "local" | "groq" | "gemini";
   defaultRegister: Register;
   cleanupProvider: "auto" | "ollama" | "openai-compatible" | "gemini" | "disabled";
   cleanupModel: string;
@@ -75,7 +75,6 @@ export interface AppSettings {
   trailingBufferMs: number;
   launchAtStartup: boolean;
   keepRecoveryAudio: boolean;
-  injectionMode: "clipboard" | "keystrokes";
   dictionary: DictionaryEntry[];
   dismissedSuggestions: DictionarySuggestion[];
   speechModelSetupAttempted: boolean;

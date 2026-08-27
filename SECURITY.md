@@ -13,8 +13,15 @@ the issue requires Accessibility permissions.
 ## Security properties
 
 - Speech audio and transcripts remain local by default. Audio leaves the device
-  only when the user explicitly selects Groq transcription; transcript text
-  leaves the device only when the user explicitly selects Gemini cleanup.
+  only when the user explicitly selects Groq or Gemini transcription;
+  transcript text leaves the device only when the user explicitly selects
+  Gemini cleanup.
+- Gemini transcription uploads the completed recording through Google's Files
+  API after shortcut release, requests deletion immediately after the
+  transcription attempt, and sets `store: false` on the interaction. Google
+  documents that a file can remain for up to 48 hours if immediate deletion
+  does not succeed. Google may use free-tier content to improve its products;
+  paid-tier content is excluded under Google's current API terms.
 - Scribe's nearby-text context is disabled by default, including for existing
   installations. When enabled, Quill reads only selected text and a bounded
   region around the caret; it never captures screenshots or password fields.
@@ -26,6 +33,9 @@ the issue requires Accessibility permissions.
   frontend after saving, placed in URLs, logs, tracing fields, or metrics.
 - Provider error response bodies are never logged because they can echo audio
   transcripts or prompt content.
+- Cloud speech passes through local voice-activity detection before upload.
+  Groq segment confidence metadata is used to reject low-confidence non-speech
+  output without matching or logging transcript phrases.
 - Cleanup runs against a loopback-only LLM endpoint; the client rejects any
   non-loopback host before sending a request.
 - Cleanup output can rephrase and restructure the transcript (including

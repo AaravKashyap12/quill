@@ -4,6 +4,7 @@ use crate::credentials::{get_key, CloudProvider};
 use crate::metrics;
 use crate::model::AppSettings;
 use crate::streaming::TimedWord;
+use crate::transcription::speech::{detect_speech_window, SpeechWindow};
 use anyhow::{anyhow, Result};
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
@@ -30,9 +31,9 @@ pub struct GroqTranscriber {
 #[derive(Debug, Deserialize)]
 struct GroqResponse {
     #[serde(default)]
-    text: String,
-    #[serde(default)]
     words: Vec<GroqWord>,
+    #[serde(default)]
+    segments: Vec<GroqSegment>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,6 +43,22 @@ struct GroqWord {
     start: f64,
     #[serde(default)]
     end: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct GroqSegment {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    start: f64,
+    #[serde(default)]
+    end: f64,
+    #[serde(default)]
+    avg_logprob: f64,
+    #[serde(default)]
+    compression_ratio: f64,
+    #[serde(default)]
+    no_speech_prob: f64,
 }
 
 impl GroqTranscriber {
@@ -75,8 +92,17 @@ impl GroqTranscriber {
         }
         let duration_ms = samples.len() as u64 * 1_000 / crate::audio::WHISPER_SAMPLE_RATE as u64;
         let bucket = metrics::audio_duration_bucket(duration_ms);
+        let Some(speech) = detect_speech_window(samples) else {
+            return Ok(AsrPass {
+                words: Vec::new(),
+                text: String::new(),
+                latency_ms: 0,
+                timings_synthetic: false,
+            });
+        };
+        let speech_samples = speech.samples(samples);
         let encode_started = Instant::now();
-        let wav = pcm16_wav(samples);
+        let wav = pcm16_wav(speech_samples);
         record_stage(
             "wavEncodeMs",
             encode_started.elapsed().as_millis(),
@@ -104,7 +130,7 @@ impl GroqTranscriber {
             .part("file", part)
             .text("model", MODEL)
             .text("response_format", "verbose_json")
-            .text("timestamp_granularities[]", "word")
+            .text("timestamp_granularities[]", "segment")
             .text("temperature", "0");
         if settings.language != "auto" && !settings.language.trim().is_empty() {
             form = form.text("language", settings.language.clone());
@@ -162,8 +188,14 @@ impl GroqTranscriber {
         };
         let request_ms = started.elapsed().as_millis();
         record_stage("groqRequestMs", request_ms, mode, "success", bucket);
-        let text = payload.text.trim().to_owned();
-        let (words, timings_synthetic) = words_or_synthetic(payload.words, &text, samples.len());
+        let (text, accepted_ranges) = accepted_text_and_ranges(&payload, &speech);
+        let words = retain_words_in_ranges(payload.words, accepted_ranges.as_deref());
+        let (mut words, timings_synthetic) = words_or_synthetic(words, &text, speech_samples.len());
+        let offset_ms = speech.start_ms();
+        for word in &mut words {
+            word.start_ms = word.start_ms.saturating_add(offset_ms);
+            word.end_ms = word.end_ms.saturating_add(offset_ms);
+        }
         Ok(AsrPass {
             words,
             text,
@@ -171,6 +203,63 @@ impl GroqTranscriber {
             timings_synthetic,
         })
     }
+}
+
+fn segment_is_trustworthy(segment: &GroqSegment) -> bool {
+    if segment.text.trim().is_empty() {
+        return false;
+    }
+    if segment.no_speech_prob >= 0.85 || segment.avg_logprob <= -1.0 {
+        return false;
+    }
+    if segment.no_speech_prob >= 0.6 && segment.avg_logprob <= -0.5 {
+        return false;
+    }
+    !(segment.compression_ratio >= 2.4 && segment.avg_logprob <= -0.3)
+}
+
+fn segment_is_trustworthy_with_audio(segment: &GroqSegment, speech: &SpeechWindow) -> bool {
+    segment_is_trustworthy(segment) && speech.supports_interval(segment.start, segment.end)
+}
+
+fn accepted_text_and_ranges(
+    payload: &GroqResponse,
+    speech: &SpeechWindow,
+) -> (String, Option<Vec<(f64, f64)>>) {
+    if payload.segments.is_empty() {
+        return (String::new(), Some(Vec::new()));
+    }
+    let accepted = payload
+        .segments
+        .iter()
+        .filter(|segment| segment_is_trustworthy_with_audio(segment, speech))
+        .collect::<Vec<_>>();
+    let text = accepted
+        .iter()
+        .map(|segment| segment.text.trim())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let ranges = accepted
+        .into_iter()
+        .map(|segment| (segment.start.max(0.0), segment.end.max(segment.start)))
+        .collect();
+    (text, Some(ranges))
+}
+
+fn retain_words_in_ranges(words: Vec<GroqWord>, ranges: Option<&[(f64, f64)]>) -> Vec<GroqWord> {
+    let Some(ranges) = ranges else {
+        return words;
+    };
+    words
+        .into_iter()
+        .filter(|word| {
+            let midpoint = (word.start + word.end) / 2.0;
+            ranges
+                .iter()
+                .any(|(start, end)| midpoint >= *start && midpoint <= *end)
+        })
+        .collect()
 }
 
 fn record_stage(metric: &str, value_ms: u128, mode: &str, outcome: &str, bucket: &str) {
@@ -258,6 +347,31 @@ fn classify_http_error(status: reqwest::StatusCode) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transcription::speech::SpeechWindow;
+
+    fn segment(
+        text: &str,
+        no_speech_prob: f64,
+        avg_logprob: f64,
+        compression_ratio: f64,
+    ) -> GroqSegment {
+        GroqSegment {
+            text: text.to_owned(),
+            start: 0.0,
+            end: 1.0,
+            avg_logprob,
+            compression_ratio,
+            no_speech_prob,
+        }
+    }
+
+    fn acoustic_window(activity: Vec<bool>) -> SpeechWindow {
+        SpeechWindow {
+            start_sample: 0,
+            end_sample: activity.len() * 320,
+            activity,
+        }
+    }
 
     #[test]
     fn missing_word_timestamps_are_synthesized() {
@@ -308,5 +422,141 @@ mod tests {
     #[test]
     fn groq_uses_the_accuracy_focused_whisper_model() {
         assert_eq!(MODEL, "whisper-large-v3");
+    }
+
+    #[test]
+    fn confident_segments_are_kept_even_when_they_contain_a_url() {
+        let segment = segment("Open youtube.com", 0.02, -0.08, 1.1);
+        assert!(segment_is_trustworthy(&segment));
+    }
+
+    #[test]
+    fn confident_provider_text_without_sustained_audio_is_rejected() {
+        let segment = GroqSegment {
+            text: "thank you for watching".into(),
+            start: 0.0,
+            end: 2.0,
+            avg_logprob: -0.05,
+            compression_ratio: 1.0,
+            no_speech_prob: 0.01,
+        };
+        let mut activity = vec![false; 100];
+        activity[4] = true;
+        activity[35] = true;
+        activity[70] = true;
+        assert!(!segment_is_trustworthy_with_audio(
+            &segment,
+            &acoustic_window(activity),
+        ));
+    }
+
+    #[test]
+    fn provider_text_without_segment_metadata_is_not_accepted() {
+        let payload = GroqResponse {
+            words: vec![GroqWord {
+                word: "unverified".into(),
+                start: 0.0,
+                end: 0.5,
+            }],
+            segments: Vec::new(),
+        };
+        let (text, ranges) = accepted_text_and_ranges(&payload, &acoustic_window(vec![true; 50]));
+        assert!(text.is_empty());
+        assert_eq!(ranges, Some(Vec::new()));
+    }
+
+    #[test]
+    fn silent_or_low_confidence_segments_are_rejected() {
+        assert!(!segment_is_trustworthy(&segment(
+            "invented subtitle",
+            0.9,
+            -0.1,
+            1.0,
+        )));
+        assert!(!segment_is_trustworthy(&segment(
+            "uncertain output",
+            0.65,
+            -0.7,
+            1.0,
+        )));
+        assert!(!segment_is_trustworthy(&segment(
+            "decoder failure",
+            0.1,
+            -1.1,
+            1.0,
+        )));
+    }
+
+    #[test]
+    fn repetitive_low_confidence_segments_are_rejected() {
+        assert!(!segment_is_trustworthy(&segment(
+            "thank you thank you thank you",
+            0.2,
+            -0.4,
+            2.5,
+        )));
+        assert!(segment_is_trustworthy(&segment(
+            "a deliberately repetitive phrase",
+            0.05,
+            -0.1,
+            2.5,
+        )));
+    }
+
+    #[test]
+    fn rejected_segments_and_their_words_do_not_reach_the_transcript() {
+        let payload = GroqResponse {
+            words: vec![
+                GroqWord {
+                    word: "hello".into(),
+                    start: 0.0,
+                    end: 0.5,
+                },
+                GroqWord {
+                    word: "invented".into(),
+                    start: 1.2,
+                    end: 1.5,
+                },
+            ],
+            segments: vec![
+                GroqSegment {
+                    text: "hello".into(),
+                    start: 0.0,
+                    end: 0.8,
+                    avg_logprob: -0.1,
+                    compression_ratio: 1.0,
+                    no_speech_prob: 0.02,
+                },
+                GroqSegment {
+                    text: "invented outro".into(),
+                    start: 1.0,
+                    end: 2.0,
+                    avg_logprob: -0.7,
+                    compression_ratio: 1.0,
+                    no_speech_prob: 0.7,
+                },
+            ],
+        };
+        let (text, ranges) = accepted_text_and_ranges(&payload, &acoustic_window(vec![true; 100]));
+        let words = retain_words_in_ranges(payload.words, ranges.as_deref());
+        assert_eq!(text, "hello");
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].word, "hello");
+    }
+
+    #[test]
+    fn rejecting_every_segment_also_rejects_every_word() {
+        let payload = GroqResponse {
+            words: vec![GroqWord {
+                word: "invented".into(),
+                start: 0.0,
+                end: 0.5,
+            }],
+            segments: vec![segment("invented outro", 0.92, -0.6, 1.0)],
+        };
+        let (text, ranges) = accepted_text_and_ranges(&payload, &acoustic_window(vec![false; 100]));
+        let words = retain_words_in_ranges(payload.words, ranges.as_deref());
+        assert!(text.is_empty());
+        assert!(words.is_empty());
     }
 }

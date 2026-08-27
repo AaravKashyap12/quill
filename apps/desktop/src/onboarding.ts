@@ -2,7 +2,7 @@ import type { AppSettings, SystemProfile } from "./types";
 
 export type SetupLanguage = "english" | "multilingual";
 export type SetupPriority = "fast" | "balanced" | "accurate";
-export type SetupSpeechRoute = "local" | "groq";
+export type SetupSpeechRoute = "local" | "groq" | "gemini";
 export type SetupScribeRoute = "disabled" | "local" | "gemini";
 
 export interface SetupDataPath {
@@ -74,7 +74,7 @@ export function recommendSpeechModel(
     return model(
       "tiny",
       language,
-      "Quill will use the CPU on this computer; Tiny keeps live dictation responsive.",
+      "Quill will use the CPU on this computer; Tiny keeps local transcription responsive.",
     );
   }
 
@@ -117,6 +117,8 @@ export function describeSetupPath(
     audio:
       speech === "groq"
         ? "Sent to Groq after you finish"
+        : speech === "gemini"
+          ? "Sent to Gemini after you finish"
         : "Processed on this device",
     transcript:
       scribe === "gemini"

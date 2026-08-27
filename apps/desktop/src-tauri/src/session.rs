@@ -10,13 +10,12 @@ use crate::metrics;
 #[cfg(windows)]
 use crate::model::ComputeBackend;
 use crate::model::{
-    AppSettings, CleanupProvider, HotkeyBehavior, HotkeyConfig, InjectionMode, Mode,
-    TranscriptionProvider,
+    AppSettings, CleanupProvider, HotkeyBehavior, HotkeyConfig, Mode, TranscriptionProvider,
 };
 use crate::recovery;
 #[cfg(test)]
 use crate::register::Register;
-use crate::streaming::{LocalAgreement, TimedWord};
+use crate::streaming::TimedWord;
 use crate::transcription::TranscriptionRuntime;
 use anyhow::{anyhow, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -442,7 +441,6 @@ struct ActiveSession {
     last_pass: Instant,
     meter_running: Arc<AtomicBool>,
     last_audio_ms: u64,
-    dictation_agreement: LocalAgreement,
     last_hypothesis: Vec<TimedWord>,
     transcript: String,
     pending_insertion: String,
@@ -523,7 +521,6 @@ impl ActiveSession {
             last_pass: Instant::now(),
             meter_running,
             last_audio_ms: 0,
-            dictation_agreement: LocalAgreement::default(),
             last_hypothesis: Vec::new(),
             transcript: String::new(),
             pending_insertion: String::new(),
@@ -577,8 +574,8 @@ impl ActiveSession {
                 app,
                 "listening",
                 Some(self.mode),
-                "Listening — Groq transcribes after release",
-                Some("Groq Cloud"),
+                runtime.listening_message(),
+                runtime.cloud_label(),
             );
             return Ok(());
         }
@@ -593,8 +590,8 @@ impl ActiveSession {
             .transcribe(&self.settings, &snapshot.samples, mode_name(self.mode))
             .await?;
         // Expand literal dictionary entries before Dictation and Scribe
-        // diverge. Rebuilding the timed words here also lets LocalAgreement
-        // stabilize the expanded form instead of injecting the spoken trigger.
+        // diverge. Rebuild timed words so final insertion and Scribe cleanup
+        // both consume the expanded form instead of the spoken trigger.
         let pass = apply_dictionary_to_pass(pass, &self.settings.dictionary);
         metrics::record(
             "warmTranscription",
@@ -605,7 +602,9 @@ impl ActiveSession {
         self.transcript = pass.text.clone();
         self.last_hypothesis = pass.words.clone();
         match self.mode {
-            Mode::Dictation => self.commit_dictation(pass, false, app)?,
+            // Dictation keeps the rolling transcript warm for recovery and
+            // final accuracy, but never changes the target editor mid-speech.
+            Mode::Dictation => {}
             // Scribe must see the complete correction before it can safely
             // inject anything. Incremental per-chunk cleanup previously typed
             // the abandoned wording before "no/sorry" arrived.
@@ -688,14 +687,14 @@ impl ActiveSession {
                 "processing",
                 Some(self.mode),
                 runtime.activity_message(),
-                (!runtime.supports_rolling()).then_some("Groq Cloud"),
+                runtime.cloud_label(),
             );
             if !runtime.supports_rolling() {
                 emit_voice_pill(
                     app,
                     "transcribing",
                     Some(self.mode),
-                    Some("Transcribing with Groq"),
+                    Some(runtime.activity_message()),
                     None,
                 );
             }
@@ -706,10 +705,13 @@ impl ActiveSession {
                 Ok(pass) => pass,
                 Err(error) => {
                     if !runtime.supports_rolling() {
+                        let provider = runtime
+                            .cloud_provider_id()
+                            .expect("non-rolling runtimes are cloud providers");
                         record_cloud_session_stage(
                             "releaseToTranscriptMs",
                             released_at.elapsed().as_millis(),
-                            "groq",
+                            provider,
                             mode_name(self.mode),
                             cloud_error_outcome(&error),
                             Some(audio_bucket),
@@ -732,7 +734,7 @@ impl ActiveSession {
                             &self.transcript,
                             true,
                         );
-                        let _ = recovery::mark_provider_failure(&self.recovery_id, "Groq");
+                        let _ = recovery::mark_provider_failure(&self.recovery_id, provider);
                     }
                     if self.mode == Mode::Scribe {
                         crate::review::hide_processing(app);
@@ -750,10 +752,13 @@ impl ActiveSession {
             self.transcript = pass.text.clone();
             self.last_hypothesis = pass.words.clone();
             if !runtime.supports_rolling() {
+                let provider = runtime
+                    .cloud_provider_id()
+                    .expect("non-rolling runtimes are cloud providers");
                 record_cloud_session_stage(
                     "releaseToTranscriptMs",
                     released_at.elapsed().as_millis(),
-                    "groq",
+                    provider,
                     mode_name(self.mode),
                     "success",
                     Some(audio_bucket),
@@ -825,18 +830,8 @@ impl ActiveSession {
     }
 
     fn commit_dictation(&mut self, pass: AsrPass, final_pass: bool, app: &AppHandle) -> Result<()> {
-        let committed = if final_pass {
-            self.dictation_agreement.flush(pass.words)
-        } else {
-            // A rolling pass can stop between the words of a dictionary
-            // trigger. Do not let LocalAgreement type that proper prefix: a
-            // later expanded pass cannot retract text already sent to the
-            // target editor. The final pass is deliberately not held back so
-            // an unfinished phrase is never lost when the user stops.
-            let stable_words = hold_back_dictionary_prefix(pass.words, &self.settings.dictionary);
-            self.dictation_agreement.update(stable_words)
-        };
-        self.inject_words(&committed, "dictationWordCommit", app)
+        let committed = dictation_words_to_insert(pass.words, final_pass);
+        self.inject_words(&committed, "dictationFinalCommit", app)
     }
 
     async fn commit_scribe(
@@ -984,9 +979,7 @@ impl ActiveSession {
         insertion.push(' ');
         let mut batch = std::mem::take(&mut self.pending_insertion);
         batch.push_str(&insertion);
-        let uses_clipboard = matches!(self.settings.injection_mode, InjectionMode::Clipboard);
-
-        let outcome = injection::inject_text_to_target(&self.target, &batch, uses_clipboard);
+        let outcome = injection::inject_text_to_target(&self.target, &batch);
         match outcome {
             Ok(injection::TargetInjection::Inserted) => {
                 self.pending_notice_sent = false;
@@ -1055,8 +1048,7 @@ impl ActiveSession {
         }
 
         let batch = std::mem::take(&mut self.pending_insertion);
-        let uses_clipboard = matches!(self.settings.injection_mode, InjectionMode::Clipboard);
-        match injection::inject_text_to_target(&self.target, &batch, uses_clipboard) {
+        match injection::inject_text_to_target(&self.target, &batch) {
             Ok(injection::TargetInjection::Inserted) => {
                 self.pending_notice_sent = false;
                 tracing::info!("queued text inserted after the original editor regained focus");
@@ -1098,7 +1090,6 @@ impl ActiveSession {
         Some(DeferredInsertion {
             target: self.target.clone(),
             text: std::mem::take(&mut self.pending_insertion),
-            use_clipboard: matches!(self.settings.injection_mode, InjectionMode::Clipboard),
             unavailable_notice_sent: false,
         })
     }
@@ -1121,7 +1112,6 @@ fn resolve_scribe_register(detected: Register, default_register: Register) -> Re
 struct DeferredInsertion {
     target: injection::InsertionTarget,
     text: String,
-    use_clipboard: bool,
     unavailable_notice_sent: bool,
 }
 
@@ -1150,11 +1140,7 @@ fn flush_deferred_insertions(
             continue;
         }
 
-        match injection::inject_text_to_target(
-            &deferred.target,
-            &deferred.text,
-            deferred.use_clipboard,
-        ) {
+        match injection::inject_text_to_target(&deferred.target, &deferred.text) {
             Ok(injection::TargetInjection::Inserted) => {
                 tracing::info!("queued text inserted after the original editor regained focus");
                 metrics::record(
@@ -1195,12 +1181,12 @@ fn flush_deferred_insertions(
     Ok(())
 }
 
-#[cfg(test)]
-fn common_prefix_len(left: &[TimedWord], right: &[TimedWord]) -> usize {
-    left.iter()
-        .zip(right)
-        .take_while(|(left, right)| left.text.eq_ignore_ascii_case(&right.text))
-        .count()
+fn dictation_words_to_insert(words: Vec<TimedWord>, final_pass: bool) -> Vec<TimedWord> {
+    if final_pass {
+        words
+    } else {
+        Vec::new()
+    }
 }
 
 fn render_words(words: &[TimedWord]) -> String {
@@ -1260,57 +1246,6 @@ fn apply_dictionary_to_pass(
     pass
 }
 
-/// Remove the longest trailing proper prefix of any multi-word dictionary
-/// trigger from an incremental hypothesis. The words are reconsidered on the
-/// next cumulative ASR pass; this only delays them, it never deletes final
-/// dictated text.
-fn hold_back_dictionary_prefix(
-    mut words: Vec<TimedWord>,
-    entries: &[crate::model::DictionaryEntry],
-) -> Vec<TimedWord> {
-    if words.is_empty() || entries.is_empty() {
-        return words;
-    }
-
-    let hypothesis: Vec<String> = words
-        .iter()
-        .map(|word| normalize_dictionary_token(&word.text))
-        .collect();
-    let mut hold_back = 0usize;
-
-    for entry in entries {
-        let trigger: Vec<String> = entry
-            .spoken
-            .split_whitespace()
-            .map(normalize_dictionary_token)
-            .filter(|token| !token.is_empty())
-            .collect();
-        if trigger.len() < 2 {
-            continue;
-        }
-
-        let max_prefix = (trigger.len() - 1).min(hypothesis.len());
-        for prefix_len in (1..=max_prefix).rev() {
-            let tail_start = hypothesis.len() - prefix_len;
-            if hypothesis[tail_start..] == trigger[..prefix_len] {
-                hold_back = hold_back.max(prefix_len);
-                break;
-            }
-        }
-    }
-
-    words.truncate(words.len().saturating_sub(hold_back));
-    words
-}
-
-fn normalize_dictionary_token(token: &str) -> String {
-    token
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
 fn starts_with_tight_punctuation(text: &str) -> bool {
     text.starts_with([',', '.', '!', '?', ':', ';', ')', ']', '}'])
 }
@@ -1340,7 +1275,11 @@ fn cloud_path_name(settings: &AppSettings) -> Option<&'static str> {
     match (settings.transcription_provider, settings.cleanup_provider) {
         (TranscriptionProvider::Groq, CleanupProvider::Gemini) => Some("groq+gemini"),
         (TranscriptionProvider::Groq, _) => Some("groq"),
-        (_, CleanupProvider::Gemini) => Some("gemini"),
+        (TranscriptionProvider::Gemini, CleanupProvider::Gemini) => {
+            Some("gemini-transcribe+gemini-scribe")
+        }
+        (TranscriptionProvider::Gemini, _) => Some("gemini-transcribe"),
+        (_, CleanupProvider::Gemini) => Some("gemini-scribe"),
         _ => None,
     }
 }
@@ -1538,7 +1477,16 @@ mod tests {
         assert_eq!(cloud_path_name(&settings), Some("groq+gemini"));
 
         settings.transcription_provider = TranscriptionProvider::Local;
-        assert_eq!(cloud_path_name(&settings), Some("gemini"));
+        assert_eq!(cloud_path_name(&settings), Some("gemini-scribe"));
+
+        settings.transcription_provider = TranscriptionProvider::Gemini;
+        assert_eq!(
+            cloud_path_name(&settings),
+            Some("gemini-transcribe+gemini-scribe")
+        );
+
+        settings.cleanup_provider = CleanupProvider::Disabled;
+        assert_eq!(cloud_path_name(&settings), Some("gemini-transcribe"));
     }
 
     #[test]
@@ -1558,6 +1506,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dictation_inserts_only_the_final_pass() {
+        assert!(dictation_words_to_insert(words("one two"), false).is_empty());
+        assert_eq!(
+            render_words(&dictation_words_to_insert(words("one two"), true)),
+            "one two"
+        );
+    }
+
     fn words(text: &str) -> Vec<TimedWord> {
         text.split_whitespace()
             .enumerate()
@@ -1567,14 +1524,6 @@ mod tests {
                 end_ms: (index as u64 + 1) * 250,
             })
             .collect()
-    }
-
-    #[test]
-    fn scribe_prefix_requires_two_matching_passes() {
-        assert_eq!(
-            common_prefix_len(&words("one two three five"), &words("one two three four")),
-            3
-        );
     }
 
     #[test]
@@ -1614,64 +1563,6 @@ mod tests {
         assert!(replaced.timings_synthetic);
         assert_eq!(replaced.words.first().unwrap().start_ms, 0);
         assert_eq!(replaced.words.last().unwrap().end_ms, 1_500);
-    }
-
-    #[test]
-    fn incremental_dictation_never_commits_a_bare_dictionary_prefix() {
-        let entries = [DictionaryEntry {
-            id: "email".into(),
-            spoken: "my email".into(),
-            replacement: "aarav@example.com".into(),
-            kind: DictionaryKind::Snippet,
-        }];
-        let mut agreement = LocalAgreement::default();
-        let mut emitted = Vec::<TimedWord>::new();
-
-        // Two matching partial passes would normally make LocalAgreement type
-        // "my". Two complete passes then stabilize the expanded address.
-        for transcript in [
-            "send it to my",
-            "send it to my",
-            "send it to my email",
-            "send it to my email",
-        ] {
-            let pass = apply_dictionary_to_pass(
-                AsrPass {
-                    words: words(transcript),
-                    text: transcript.into(),
-                    latency_ms: 1,
-                    timings_synthetic: false,
-                },
-                &entries,
-            );
-            emitted.extend(agreement.update(hold_back_dictionary_prefix(pass.words, &entries)));
-        }
-
-        let emitted_text = render_words(&emitted);
-        assert_eq!(emitted_text, "send it to aarav@example.com");
-        assert!(!emitted
-            .iter()
-            .any(|word| { normalize_dictionary_token(&word.text) == "my" }));
-    }
-
-    #[test]
-    fn final_dictation_flush_releases_an_unfinished_dictionary_prefix() {
-        let entries = [DictionaryEntry {
-            id: "email".into(),
-            spoken: "my email".into(),
-            replacement: "aarav@example.com".into(),
-            kind: DictionaryKind::Snippet,
-        }];
-        let mut agreement = LocalAgreement::default();
-        let partial = words("send it to my");
-
-        agreement.update(hold_back_dictionary_prefix(partial.clone(), &entries));
-        let committed = agreement.update(hold_back_dictionary_prefix(partial.clone(), &entries));
-        assert_eq!(render_words(&committed), "send it to");
-
-        // commit_dictation deliberately sends the unfiltered final pass to
-        // flush(), preserving "my" if the user stops before saying "email".
-        assert_eq!(render_words(&agreement.flush(partial)), "my");
     }
 
     #[test]

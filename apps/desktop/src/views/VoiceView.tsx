@@ -373,6 +373,16 @@ const styleTargets: ReadonlyArray<{ value: TargetApp; label: string }> = [
   { value: "generic", label: "Other apps" },
 ];
 
+const toneOptions: ReadonlyArray<{
+  value: StyleProfile["tone"];
+  label: string;
+}> = [
+  { value: "adaptive", label: "Adaptive" },
+  { value: "direct", label: "Direct" },
+  { value: "casual", label: "Casual" },
+  { value: "formal", label: "Formal" },
+];
+
 export function emptyStyleProfile(targetApp: TargetApp): StyleProfile {
   return {
     targetApp,
@@ -894,6 +904,8 @@ export function VoiceView({
             <dd>
               {settings.transcriptionProvider === "groq"
                 ? "Sent to Groq after release"
+                : settings.transcriptionProvider === "gemini"
+                  ? "Sent to Gemini after release"
                 : "Processed on this device"}
             </dd>
           </div>
@@ -916,15 +928,17 @@ export function VoiceView({
       <section aria-labelledby="recognition-title">
         <div className="section-heading">
           <h2 id="recognition-title">Recognition</h2>
-          <span>{settings.transcriptionProvider === "local" ? "Private and live." : "Cloud transcription after release."}</span>
+          <span>{settings.transcriptionProvider === "local" ? "Private, inserts after release." : "Cloud transcription after release."}</span>
         </div>
         <div className="settings-group">
           <SettingRow
             label="Speech provider"
             description={
               settings.transcriptionProvider === "local"
-                ? "Local types while you speak. Audio never leaves this device."
-                : "Groq can be faster on weak hardware. Audio is uploaded only after you finish speaking."
+                ? "Local transcribes on this device and inserts the completed text when you stop."
+                : settings.transcriptionProvider === "groq"
+                  ? "Groq offers generous free usage. Audio is uploaded only after you finish speaking."
+                  : "Gemini 3.5 Transcribe prioritizes accuracy. Audio is uploaded only after you finish speaking."
             }
           >
             <select
@@ -933,6 +947,7 @@ export function VoiceView({
             >
               <option value="local">Local · whisper.cpp</option>
               <option value="groq">Groq Cloud · inserts after release</option>
+              <option value="gemini">Gemini Cloud · highest quality</option>
             </select>
           </SettingRow>
           {settings.transcriptionProvider === "groq" ? (
@@ -941,6 +956,19 @@ export function VoiceView({
               description="Your recording is sent to Groq for transcription. Quill never enables this automatically."
             >
               {cloudKeyControl("groq")}
+            </SettingRow>
+          ) : null}
+          {settings.transcriptionProvider === "gemini" ? (
+            <SettingRow
+              label="Gemini connection"
+              description="Uses Gemini 3.5 Transcribe. The free tier currently allows 25 transcriptions a day. Quill never enables cloud processing automatically."
+            >
+              {cloudKeyControl("gemini")}
+              <p className="cloud-provider-disclosure">
+                Quill requests deletion immediately after transcription. If
+                deletion fails, Google may retain the upload for up to 48
+                hours. Free-tier content may be used to improve Google products.
+              </p>
             </SettingRow>
           ) : null}
           <SettingRow
@@ -963,8 +991,12 @@ export function VoiceView({
           </SettingRow>
           <div className="model-setting">
             <SettingRow
-              label="Speech model"
-              description={`${activeModel.hardware}. ${activeModel.fit}`}
+              label={settings.transcriptionProvider === "local" ? "Speech model" : "Local fallback model"}
+              description={
+                settings.transcriptionProvider === "local"
+                  ? `${activeModel.hardware}. ${activeModel.fit}`
+                  : "Used only when you explicitly choose local transcription or recover a failed cloud recording."
+              }
             >
               <select
                 value={settings.whisperModel}
@@ -1185,7 +1217,9 @@ export function VoiceView({
           <SettingRow
             label="Language"
             description={
-              settings.language === "en"
+              settings.transcriptionProvider === "gemini"
+                ? "Gemini automatically detects supported languages and code-switching. This choice remains available for your local fallback model."
+                : settings.language === "en"
                 ? "English uses dedicated English-only models for the best accuracy."
                 : settings.language === "auto"
                   ? "Auto-detect uses multilingual models and adds a small startup delay."
@@ -1266,10 +1300,10 @@ export function VoiceView({
                 </button>
               </div>
             </SettingRow>
-            {settings.cleanupProvider === "gemini" ? (
+            {settings.cleanupProvider === "gemini" && settings.transcriptionProvider !== "gemini" ? (
               <SettingRow
                 label="Gemini connection"
-                description="Only transcript text is sent to Google after you finish. Audio is never sent to Gemini."
+                description="Only transcript text is sent to Google after you finish. Audio is not sent to Gemini for this cleanup step."
               >
                 {cloudKeyControl("gemini")}
               </SettingRow>
@@ -1530,7 +1564,26 @@ export function VoiceView({
                   : " · using defaults"}
               </summary>
               <div className="style-profile-grid">
-                <label>Tone<select value={selectedStyleProfile.tone} onChange={(event) => updateStyleProfile("tone", event.target.value as StyleProfile["tone"])}><option value="adaptive">Adaptive</option><option value="direct">Direct</option><option value="casual">Casual</option><option value="formal">Formal</option></select></label>
+                <fieldset className="style-profile-field style-profile-tone">
+                  <legend>Tone</legend>
+                  <div className="style-tone-selector">
+                    {toneOptions.map((option) => (
+                      <button
+                        type="button"
+                        key={option.value}
+                        className={
+                          selectedStyleProfile.tone === option.value
+                            ? "is-selected"
+                            : undefined
+                        }
+                        aria-pressed={selectedStyleProfile.tone === option.value}
+                        onClick={() => updateStyleProfile("tone", option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </fieldset>
                 <label>Length<select value={selectedStyleProfile.length} onChange={(event) => updateStyleProfile("length", event.target.value as StyleProfile["length"])}><option value="brief">Brief</option><option value="balanced">Balanced</option><option value="detailed">Detailed</option></select></label>
                 <label>Greeting<select value={selectedStyleProfile.greeting} onChange={(event) => updateStyleProfile("greeting", event.target.value as StyleProfile["greeting"])}><option value="auto">Automatic</option><option value="always">Include</option><option value="never">Skip</option></select></label>
                 <label>Sign-off<select value={selectedStyleProfile.signOff} onChange={(event) => updateStyleProfile("signOff", event.target.value as StyleProfile["signOff"])}><option value="auto">Automatic</option><option value="always">Include</option><option value="never">Skip</option></select></label>
@@ -1554,7 +1607,9 @@ export function VoiceView({
 
         {settings.cleanupProvider === "gemini" ? (
           <p className="safety-copy">
-            Scribe sends transcript text — never audio — to Gemini with the same safety contract and review step used for local models.
+            {settings.transcriptionProvider === "gemini"
+              ? "Gemini transcription sends audio to Google after release. Scribe cleanup may then send the transcript and selected context through the same safety contract and review step."
+              : "Scribe sends transcript text — not audio — to Gemini with the same safety contract and review step used for local models."}
           </p>
         ) : settings.cleanupProvider === "disabled" ? (
           <p className="safety-copy">Scribe cleanup is off. Dictation remains available.</p>

@@ -25,6 +25,7 @@ function formatWhen(ms: number): string {
 
 function providerLabel(provider: string | null): string {
   if (provider === "groq") return "Groq";
+  if (provider === "gemini") return "Gemini";
   return provider
     ? provider.replace(/(^|[-_])([a-z])/g, (_, separator, letter) => `${separator ? " " : ""}${letter.toUpperCase()}`)
     : "Cloud provider";
@@ -42,7 +43,7 @@ export function RecoveryBanner() {
   const [pending, setPending] = useState<RecoveryManifest | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
-  const [retrying, setRetrying] = useState<"groq" | "local" | null>(null);
+  const [retrying, setRetrying] = useState<"groq" | "gemini" | "local" | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -158,7 +159,7 @@ export function RecoveryBanner() {
     }
   }
 
-  async function retry(provider: "groq" | "local") {
+  async function retry(provider: "groq" | "gemini" | "local") {
     if (!pending) return;
     setRetrying(provider);
     setStatus({ kind: "idle" });
@@ -169,9 +170,9 @@ export function RecoveryBanner() {
     } catch {
       setStatus({
         kind: "discard-failed",
-        error: provider === "groq"
-          ? "Groq couldn't finish this recording. Check your connection and try again, or transcribe it locally."
-          : "Local transcription couldn't finish. Check that a speech model is installed and try again.",
+        error: provider === "local"
+          ? "Local transcription couldn't finish. Check that a speech model is installed and try again."
+          : `${providerLabel(provider)} couldn't finish this recording. Check your connection and try again, or transcribe it locally.`,
       });
     } finally {
       setRetrying(null);
@@ -256,8 +257,21 @@ export function RecoveryBanner() {
       ) : null}
       {pending.failedProvider ? (
         <div className="recovery-banner__retry" aria-label="Recovery options">
-          <button type="button" className="ghost-button" disabled={retrying !== null} onClick={() => void retry("groq")}>
-            {retrying === "groq" ? "Retrying Groq…" : "Retry Groq"}
+          <button
+            type="button"
+            className="ghost-button"
+            disabled={retrying !== null}
+            onClick={() =>
+              void retry(
+                pending.failedProvider?.toLowerCase() === "gemini"
+                  ? "gemini"
+                  : "groq",
+              )
+            }
+          >
+            {retrying === "gemini" || retrying === "groq"
+              ? `Retrying ${providerLabel(retrying)}…`
+              : `Retry ${providerLabel(pending.failedProvider)}`}
           </button>
           <button type="button" className="ghost-button" disabled={retrying !== null} onClick={() => void retry("local")}>
             {retrying === "local" ? "Transcribing locally…" : "Transcribe locally"}

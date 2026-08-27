@@ -88,7 +88,7 @@ export async function detectProviders(): Promise<ProviderStatus[]> {
 
 export async function retryRecoveryTranscription(
   id: string,
-  provider: "groq" | "local",
+  provider: "groq" | "gemini" | "local",
 ): Promise<RecoveryManifest> {
   if (!isTauri()) throw new Error("Recovery transcription is available in the desktop app.");
   return invoke<RecoveryManifest>("retry_recovery_transcription", { id, provider });

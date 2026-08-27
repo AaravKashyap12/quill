@@ -355,12 +355,12 @@ export function Onboarding({
                 Choose how Quill should work.
               </h1>
               <p className="onboarding-lede compact">
-                Local stays private and types live. Cloud can feel lighter on
+                Local stays private. Cloud can feel lighter on
                 slower computers, but sends only the named data.
               </p>
               <fieldset className="onboarding-fieldset">
                 <legend>Speech recognition</legend>
-                <div className="onboarding-options is-two">
+                <div className="onboarding-options is-three">
                   <label
                     className={speechRoute === "local" ? "is-selected" : ""}
                   >
@@ -374,7 +374,7 @@ export function Onboarding({
                       <HardDrive size={17} aria-hidden="true" />
                     </span>
                     <strong>On this device</strong>
-                    <small>Private and types while you speak</small>
+                    <small>Private, with text inserted when you stop</small>
                   </label>
                   <label
                     className={speechRoute === "groq" ? "is-selected" : ""}
@@ -390,6 +390,21 @@ export function Onboarding({
                     </span>
                     <strong>Groq Cloud</strong>
                     <small>Audio is sent after you finish</small>
+                  </label>
+                  <label
+                    className={speechRoute === "gemini" ? "is-selected" : ""}
+                  >
+                    <input
+                      type="radio"
+                      name="speech-route"
+                      checked={speechRoute === "gemini"}
+                      onChange={() => setSpeechRoute("gemini")}
+                    />
+                    <span className="option-icon">
+                      <Sparkles size={17} aria-hidden="true" />
+                    </span>
+                    <strong>Gemini quality</strong>
+                    <small>25 free transcriptions a day</small>
                   </label>
                 </div>
               </fieldset>
@@ -508,6 +523,47 @@ export function Onboarding({
                   className="primary-button"
                   type="button"
                   disabled={!groqConnected}
+                  onClick={completeSpeechStep}
+                >
+                  Continue <ArrowRight size={14} aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {step === "speech" && speechRoute === "gemini" ? (
+            <div className="onboarding-panel">
+              <h1 id="onboarding-title" ref={headingRef} tabIndex={-1}>
+                Connect Gemini for speech.
+              </h1>
+              <p className="onboarding-lede compact">
+                Gemini 3.5 Transcribe prioritizes accuracy and understands
+                corrections. Google currently allows 25 free transcriptions a
+                day; audio is uploaded only after you finish.
+              </p>
+              <CloudKeySetup
+                provider="gemini"
+                status={statuses.find((status) => status.provider === "gemini")}
+                onConnect={onConnectCloud}
+                onStatus={updateStatus}
+              />
+              <p className="onboarding-cloud-disclosure">
+                Quill requests deletion immediately after transcription. If
+                deletion fails, Google may retain the upload for up to 48
+                hours. Free-tier content may be used to improve Google products.
+              </p>
+              <div className="onboarding-actions">
+                <button
+                  className="ghost-action"
+                  type="button"
+                  onClick={() => setStep("choices")}
+                >
+                  <ArrowLeft size={14} aria-hidden="true" /> Back
+                </button>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={!geminiConnected}
                   onClick={completeSpeechStep}
                 >
                   Continue <ArrowRight size={14} aria-hidden="true" />

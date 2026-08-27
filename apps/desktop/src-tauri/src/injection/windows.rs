@@ -13,7 +13,7 @@ use windows::Win32::UI::Accessibility::{
 use windows_sys::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-    KEYEVENTF_UNICODE, VK_CONTROL,
+    VK_CONTROL,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, IsWindow, SendMessageTimeoutW,
@@ -22,7 +22,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 /// A stable snapshot of the app/control that had the text caret when Quill's
 /// hotkey was pressed. `SendInput` cannot target a background app, so this is
-/// also used to decide when it is unsafe to emit simulated keystrokes.
+/// also used to decide when it is unsafe to emit a clipboard paste chord.
 #[derive(Clone, Debug)]
 pub struct InsertionTarget {
     top_level: isize,
@@ -244,55 +244,37 @@ fn paste_to_target(target: &InsertionTarget) -> bool {
     }
 }
 
-pub fn inject_text_to_target(
-    target: &InsertionTarget,
-    text: &str,
-    use_clipboard: bool,
-) -> Result<TargetInjection> {
+pub fn inject_text_to_target(target: &InsertionTarget, text: &str) -> Result<TargetInjection> {
     if !target_is_available(target) {
         return Ok(TargetInjection::Unavailable);
     }
 
-    if use_clipboard {
-        Clipboard::new()?.set_text(text.to_owned())?;
-        if !target_is_foreground(target) {
-            if paste_to_target(target) {
-                tracing::info!("inserted text into the pinned background target");
-                return Ok(TargetInjection::Inserted);
-            }
-            return Ok(TargetInjection::Queued);
-        }
-        // A focused target uses the normal keyboard paste path, which has the
-        // broadest compatibility with browser/Electron editing surfaces.
-        paste()?;
-        return Ok(TargetInjection::Inserted);
-    }
-
-    // Direct Unicode uses the global input stream. It is safe only while the
-    // same top-level target still owns the foreground.
+    Clipboard::new()?.set_text(text.to_owned())?;
     if !target_is_foreground(target) {
+        if paste_to_target(target) {
+            tracing::info!("inserted text into the pinned background target");
+            return Ok(TargetInjection::Inserted);
+        }
         return Ok(TargetInjection::Queued);
     }
-    type_unicode(text)?;
+    // A focused target uses the normal keyboard paste path, which has the
+    // broadest compatibility with browser/Electron editing surfaces.
+    paste()?;
     Ok(TargetInjection::Inserted)
 }
 
-pub fn inject_review_text(
-    target: &InsertionTarget,
-    text: &str,
-    use_clipboard: bool,
-) -> Result<TargetInjection> {
+pub fn inject_review_text(target: &InsertionTarget, text: &str) -> Result<TargetInjection> {
     if !target_is_available(target) {
         return Ok(TargetInjection::Unavailable);
     }
 
     // A Done click is an explicit hand-off back to the original editor, so a
-    // foreground activation is appropriate here (unlike live Dictation).
+    // foreground activation is appropriate here (unlike an active Dictation session).
     unsafe {
         SetForegroundWindow(hwnd(target.top_level));
     }
     std::thread::sleep(std::time::Duration::from_millis(55));
-    inject_text_to_target(target, text, use_clipboard)
+    inject_text_to_target(target, text)
 }
 
 fn send(inputs: &mut [INPUT]) -> Result<()> {
@@ -318,31 +300,14 @@ fn keyboard_input(code: u16, flags: u32) -> INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
-                wVk: if flags & KEYEVENTF_UNICODE == 0 {
-                    code
-                } else {
-                    0
-                },
-                wScan: if flags & KEYEVENTF_UNICODE != 0 {
-                    code
-                } else {
-                    0
-                },
+                wVk: code,
+                wScan: 0,
                 dwFlags: flags,
                 time: 0,
                 dwExtraInfo: QUILL_INPUT_MARKER,
             },
         },
     }
-}
-
-pub fn type_unicode(text: &str) -> Result<()> {
-    let mut inputs = Vec::with_capacity(text.encode_utf16().count() * 2);
-    for unit in text.encode_utf16() {
-        inputs.push(keyboard_input(unit, KEYEVENTF_UNICODE));
-        inputs.push(keyboard_input(unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
-    }
-    send(&mut inputs)
 }
 
 pub fn paste() -> Result<()> {

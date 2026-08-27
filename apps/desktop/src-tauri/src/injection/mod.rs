@@ -175,18 +175,14 @@ pub fn target_is_available(target: &InsertionTarget) -> bool {
 /// bounded `WM_PASTE` delivery to that specific control when it is in the
 /// background; if that target cannot accept the message, no foreground input
 /// is sent and the caller receives `Queued` instead.
-pub fn inject_text_to_target(
-    target: &InsertionTarget,
-    text: &str,
-    use_clipboard: bool,
-) -> Result<TargetInjection> {
+pub fn inject_text_to_target(target: &InsertionTarget, text: &str) -> Result<TargetInjection> {
     if text.is_empty() {
         return Ok(TargetInjection::Inserted);
     }
 
     #[cfg(windows)]
     {
-        windows::inject_text_to_target(&target.inner, text, use_clipboard)
+        windows::inject_text_to_target(&target.inner, text)
     }
 
     #[cfg(target_os = "macos")]
@@ -197,14 +193,14 @@ pub fn inject_text_to_target(
         if !macos::target_is_foreground(&target.inner) {
             return Ok(TargetInjection::Queued);
         }
-        inject_text(text, use_clipboard)?;
+        inject_text(text)?;
         Ok(TargetInjection::Inserted)
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = target;
-        inject_text(text, use_clipboard)?;
+        inject_text(text)?;
         Ok(TargetInjection::Inserted)
     }
 }
@@ -212,51 +208,38 @@ pub fn inject_text_to_target(
 /// Completes an explicitly confirmed review by restoring the original editor
 /// and inserting there. The foreground switch is intentional here: the user
 /// pressed Done and expects to return to the app where Scribe started.
-pub fn inject_review_text(
-    target: &InsertionTarget,
-    text: &str,
-    use_clipboard: bool,
-) -> Result<TargetInjection> {
+pub fn inject_review_text(target: &InsertionTarget, text: &str) -> Result<TargetInjection> {
     if text.is_empty() {
         return Ok(TargetInjection::Inserted);
     }
 
     #[cfg(windows)]
     {
-        windows::inject_review_text(&target.inner, text, use_clipboard)
+        windows::inject_review_text(&target.inner, text)
     }
 
     #[cfg(target_os = "macos")]
     {
         macos::activate_target(&target.inner)?;
-        inject_text_to_target(target, text, use_clipboard)
+        inject_text_to_target(target, text)
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
     {
-        inject_text_to_target(target, text, use_clipboard)
+        inject_text_to_target(target, text)
     }
 }
 
 #[allow(dead_code)]
-pub fn inject_text(text: &str, use_clipboard: bool) -> Result<()> {
+pub fn inject_text(text: &str) -> Result<()> {
     if text.is_empty() {
         return Ok(());
     }
-    if use_clipboard {
-        Clipboard::new()?.set_text(text.to_owned())?;
-        #[cfg(windows)]
-        return windows::paste();
-        #[cfg(target_os = "macos")]
-        return macos::paste();
-    }
-
+    Clipboard::new()?.set_text(text.to_owned())?;
     #[cfg(windows)]
-    return windows::type_unicode(text);
+    return windows::paste();
     #[cfg(target_os = "macos")]
-    return Err(anyhow!(
-        "direct Unicode injection is not enabled on macOS; use clipboard mode"
-    ));
+    return macos::paste();
     #[allow(unreachable_code)]
     Err(anyhow!("text injection is unsupported on this platform"))
 }

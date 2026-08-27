@@ -10,7 +10,7 @@ configurable global shortcuts active at the same time:
 
 | Hotkey | Behavior |
 | --- | --- |
-| **Dictation** | Types the stabilized transcript word by word, exactly as spoken. No cleanup. |
+| **Dictation** | Inserts the completed transcript when you stop, exactly as spoken. No cleanup. |
 | **Scribe** | Holds a short trailing window, resolves spoken self-corrections, removes filler, applies punctuation, and types only the final wording. |
 
 The hotkey is the mode switch. There is no settings menu to open while you are
@@ -23,7 +23,7 @@ working.
 
 Quill is currently an **engineering preview**:
 
-- The trailing-buffer and LocalAgreement contracts are implemented and covered
+- The trailing-buffer and final-insertion contracts are implemented and covered
   by standalone tests.
 - The Tauri v2 shell, tray/updater/autostart configuration, settings UI,
   floating overlay, local-provider detection, hotkey polling, text injection,
@@ -56,10 +56,10 @@ Scribe types:
 
 > Write down one two three four and five.
 
-Dictation uses rolling re-transcription and LocalAgreement: a word is committed
-only when two consecutive whisper.cpp passes agree on the same prefix. Scribe
-holds the complete utterance until the user releases or unlocks its shortcut,
-then resolves corrections once before any text reaches the cursor.
+Dictation keeps rolling transcription warm while the shortcut is active, then
+inserts the complete verbatim transcript when the user releases or unlocks it.
+Scribe holds the same complete utterance, resolves corrections, and opens a
+review draft before any text reaches the cursor.
 
 Scribe detects whether the captured target is email, chat, an AI prompt, notes,
 or general text and sends the raw transcript to your selected cleanup provider with the matching
@@ -155,7 +155,7 @@ apps/
   desktop/              React + Vite UI and Tauri v2 Rust core
     src-tauri/
       src/asr.rs         whisper.cpp sidecar boundary
-      src/streaming.rs   LocalAgreement word commit
+      src/streaming.rs   Timed-word representation shared by speech providers
       src/cleanup.rs     local LLM discovery, prompt, sanity guard
       src/hotkeys/       poll-only Windows/macOS hotkey state
       src/injection/     SendInput / CoreGraphics text insertion
@@ -173,11 +173,11 @@ scripts/
 | --- | --- | --- |
 | Desktop shell | Tauri v2 + React + TypeScript | One UI and command surface; Windows is verified and macOS remains incomplete |
 | Recognition | whisper.cpp | CPU runtime bundled on Windows; CUDA is an optional verified download; macOS Metal packaging is not yet wired into the app runtime |
-| Live commit | Rolling re-transcription + LocalAgreement | Low perceived latency without flickering unstable words |
-| Speech recognition | Local whisper.cpp or explicit Groq Cloud | Local types live; Groq inserts after release |
+| Text commit | Final clipboard paste | The target editor changes only after the user stops speaking |
+| Speech recognition | Local whisper.cpp, Groq, or Gemini 3.5 Transcribe | Every provider inserts after release |
 | Scribe cleanup | Ollama, OpenAI-compatible localhost, Gemini, or disabled | Every draft still passes the same guards and review window |
 | Windows hotkeys | `GetAsyncKeyState` polling | No system-wide keyboard hook |
-| Windows insertion | `SendInput` or clipboard paste | Unicode support and reliable long-text insertion |
+| Windows insertion | Clipboard paste | Reliable Unicode insertion after transcription completes |
 | macOS hotkeys | `CGEventSourceKeyState` polling | Global state without an event tap keyboard hook |
 | macOS insertion | CoreGraphics events + clipboard | Works through the standard Accessibility permission path |
 | Updates | Tauri updater + GitHub Releases | User-confirmed updates from signed release artifacts |
@@ -291,8 +291,10 @@ issues should follow [SECURITY.md](SECURITY.md).
 
 [GNU AGPL-3.0-or-later](LICENSE)
 Cloud processing is always opt-in. Groq transcription uses
-`whisper-large-v3` and uploads the completed recording only after the
-shortcut is released; it does not type live. Gemini Scribe uses
-`gemini-3.1-flash-lite` and receives transcript text, never audio. API keys are
-stored in Windows Credential Manager or macOS Keychain rather than in Quill's
-settings file. Adding a key never changes the active provider.
+`whisper-large-v3`; Gemini transcription uses `gemini-3.5-transcribe` in
+Verbatim mode for Dictation and Smart mode for Scribe. Both upload the
+completed recording only after the shortcut is released and do not type live.
+Gemini Scribe cleanup uses `gemini-3.1-flash-lite` and receives transcript text
+plus optional bounded editor context. API keys are stored in Windows Credential
+Manager or macOS Keychain rather than in Quill's settings file. Adding a key
+never changes the active provider.

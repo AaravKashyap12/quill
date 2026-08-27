@@ -39,6 +39,7 @@ tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-segmentation = "1"
+webrtc-vad = "0.4"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]

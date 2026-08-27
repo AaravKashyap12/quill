@@ -85,7 +85,7 @@ export function ModeShortcut({
   const Icon = isDictation ? Mic : PenLine;
   const title = isDictation ? "Dictation" : "Scribe";
   const description = isDictation
-    ? "Raw words, live as you speak"
+    ? "Raw words, inserted when you stop"
     : "Corrections resolved before typing";
   const hotkeyLabel = formatHotkey(settings, mode);
   const fragments = chordFragments(hotkeyLabel);

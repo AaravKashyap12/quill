@@ -139,7 +139,6 @@ pub struct AppSettings {
     pub trailing_buffer_ms: u64,
     pub launch_at_startup: bool,
     pub keep_recovery_audio: bool,
-    pub injection_mode: InjectionMode,
     #[serde(default)]
     pub dictionary: Vec<DictionaryEntry>,
     #[serde(default)]
@@ -199,7 +198,6 @@ impl Default for AppSettings {
             trailing_buffer_ms: 1_500,
             launch_at_startup: false,
             keep_recovery_audio: true,
-            injection_mode: InjectionMode::Clipboard,
             dictionary: Vec::new(),
             dismissed_suggestions: Vec::new(),
             speech_model_setup_attempted: false,
@@ -323,13 +321,7 @@ pub enum TranscriptionProvider {
     #[default]
     Local,
     Groq,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum InjectionMode {
-    Clipboard,
-    Keystrokes,
+    Gemini,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -371,6 +363,9 @@ mod tests {
     #[test]
     fn older_settings_fields_receive_safe_defaults() {
         let mut value = serde_json::to_value(AppSettings::default()).unwrap();
+        // Releases that offered simulated typing persisted this field. It is
+        // intentionally ignored now that clipboard paste is the only path.
+        value["injectionMode"] = serde_json::json!("keystrokes");
         value.as_object_mut().unwrap().remove("dictionary");
         value
             .as_object_mut()
@@ -408,6 +403,26 @@ mod tests {
         assert!(!restored.onboarding_completed);
         assert!(!restored.scribe_context_enabled);
         assert!(restored.style_profiles.is_empty());
+        assert!(!serde_json::to_value(restored)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("injectionMode"));
+    }
+
+    #[test]
+    fn gemini_transcription_provider_survives_settings_serialization() {
+        let settings = AppSettings {
+            transcription_provider: TranscriptionProvider::Gemini,
+            ..AppSettings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let restored: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            restored.transcription_provider,
+            TranscriptionProvider::Gemini
+        );
+        assert!(json.contains("\"transcriptionProvider\":\"gemini\""));
     }
 
     #[test]

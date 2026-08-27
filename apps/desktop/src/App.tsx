@@ -117,7 +117,11 @@ export function App() {
       if (disposed) return;
       setSystemProfile(profile);
       let checkedGemini = geminiStatus;
-      if (loaded.cleanupProvider === "gemini" && geminiStatus.configured) {
+      if (
+        (loaded.cleanupProvider === "gemini" ||
+          loaded.transcriptionProvider === "gemini") &&
+        geminiStatus.configured
+      ) {
         try {
           checkedGemini = await testProviderConnection("gemini");
         } catch (error) {
@@ -131,12 +135,21 @@ export function App() {
       if (disposed) return;
       setCloudStatuses([groqStatus, checkedGemini]);
 
-      if (loaded.transcriptionProvider === "groq" && groqStatus.configured) {
+      const selectedCloudSpeechStatus =
+        loaded.transcriptionProvider === "groq"
+          ? groqStatus
+          : loaded.transcriptionProvider === "gemini"
+            ? checkedGemini
+            : undefined;
+      if (selectedCloudSpeechStatus?.configured) {
         savedSettings.current = loaded;
         setSettings(loaded);
         setSpeechSetup({
           phase: "ready",
-          modelId: "Groq Cloud",
+          modelId:
+            loaded.transcriptionProvider === "gemini"
+              ? "Gemini 3.5 Transcribe"
+              : "Groq Cloud",
           bytesDownloaded: 0,
           bytesTotal: 0,
           error: null,
@@ -310,11 +323,22 @@ export function App() {
       getProviderKeyStatus("gemini"),
     ]);
     setCloudStatuses(statuses);
-    const groq = statuses.find((status) => status.provider === "groq");
-    if (settings.transcriptionProvider === "groq" && groq?.configured) {
+    const speechProvider =
+      settings.transcriptionProvider === "groq"
+        ? "groq"
+        : settings.transcriptionProvider === "gemini"
+          ? "gemini"
+          : null;
+    const speechStatus = statuses.find(
+      (status) => status.provider === speechProvider,
+    );
+    if (speechProvider && speechStatus?.configured) {
       setSpeechSetup({
         phase: "ready",
-        modelId: "Groq Cloud",
+        modelId:
+          speechProvider === "gemini"
+            ? "Gemini 3.5 Transcribe"
+            : "Groq Cloud",
         bytesDownloaded: 0,
         bytesTotal: 0,
         error: null,
@@ -378,22 +402,24 @@ export function App() {
       transcriptionProvider: speech,
       cleanupProvider: cleanupProviderForSetup(scribe),
       speechModelSetupAttempted:
-        speech === "groq" || savedSettings.current.speechModelSetupAttempted,
+        speech !== "local" || savedSettings.current.speechModelSetupAttempted,
     };
     await persistSettings(next);
     savedSettings.current = next;
     setSettings(next);
-    if (speech === "groq") {
-      const groq = cloudStatuses.find((status) => status.provider === "groq");
+    if (speech !== "local") {
+      const status = cloudStatuses.find((item) => item.provider === speech);
+      const providerName = speech === "gemini" ? "Gemini" : "Groq";
       setSpeechSetup({
-        phase: groq?.status === "connected" ? "ready" : "missing",
-        modelId: "Groq Cloud",
+        phase: status?.status === "connected" ? "ready" : "missing",
+        modelId:
+          speech === "gemini" ? "Gemini 3.5 Transcribe" : "Groq Cloud",
         bytesDownloaded: 0,
         bytesTotal: 0,
         error:
-          groq?.status === "connected"
+          status?.status === "connected"
             ? null
-            : "Connect a Groq API key to finish speech setup.",
+            : `Connect a ${providerName} API key to finish speech setup.`,
       });
     } else {
       const installed = await listInstalledWhisperModels();
@@ -418,10 +444,14 @@ export function App() {
       ...current.filter((status) => status.provider !== provider),
       tested,
     ]);
-    if (provider === "groq" && tested.status === "connected") {
+    if (
+      provider === savedSettings.current.transcriptionProvider &&
+      tested.status === "connected"
+    ) {
       setSpeechSetup({
         phase: "ready",
-        modelId: "Groq Cloud",
+        modelId:
+          provider === "gemini" ? "Gemini 3.5 Transcribe" : "Groq Cloud",
         bytesDownloaded: 0,
         bytesTotal: 0,
         error: null,
@@ -596,7 +626,7 @@ export function App() {
           <div className="sidebar-privacy">
             <LockKeyhole size={14} />
             <span>
-              {settings.transcriptionProvider === "groq" || settings.cleanupProvider === "gemini"
+              {settings.transcriptionProvider !== "local" || settings.cleanupProvider === "gemini"
                 ? "Cloud is used only for selected providers"
                 : "Processing stays on this device"}
             </span>

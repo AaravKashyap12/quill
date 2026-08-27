@@ -69,5 +69,9 @@ describe("first-run provider choices", () => {
     expect(describeSetupPath("groq", "disabled").transcript).toBe(
       "No Scribe cleanup",
     );
+    expect(describeSetupPath("gemini", "gemini")).toEqual({
+      audio: "Sent to Gemini after you finish",
+      transcript: "Sent to Gemini for Scribe",
+    });
   });
 });

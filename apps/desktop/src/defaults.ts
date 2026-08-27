@@ -26,7 +26,6 @@ export const defaultSettings: AppSettings = {
   trailingBufferMs: 1500,
   launchAtStartup: false,
   keepRecoveryAudio: true,
-  injectionMode: "clipboard",
   dictionary: [],
   dismissedSuggestions: [],
   speechModelSetupAttempted: false,
