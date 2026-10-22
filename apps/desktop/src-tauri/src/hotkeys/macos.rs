@@ -1,9 +1,13 @@
-use crate::model::HotkeyConfig;
+use super::HotkeyState;
+use crate::model::{HotkeyBehavior, HotkeyConfig};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 type CGKeyCode = u16;
 type CGEventSourceStateID = i32;
 const COMBINED_SESSION_STATE: CGEventSourceStateID = 0;
-const HID_SYSTEM_STATE: CGEventSourceStateID = 1;
 const KEY_SPACE: CGKeyCode = 49;
 const KEY_CONTROL: CGKeyCode = 59;
 const KEY_SHIFT: CGKeyCode = 56;
@@ -17,11 +21,15 @@ const KEY_RIGHT_COMMAND: CGKeyCode = 54;
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn CGEventSourceKeyState(state_id: CGEventSourceStateID, key: CGKeyCode) -> bool;
+    fn CGEventSourceFlagsState(state_id: CGEventSourceStateID) -> u64;
+    fn CGPreflightListenEventAccess() -> bool;
 }
 
 fn key_code(key: &str) -> Option<CGKeyCode> {
     match key {
         "Space" => Some(KEY_SPACE),
+        "AltRight" => Some(KEY_RIGHT_OPTION),
+        "MetaRight" => Some(KEY_RIGHT_COMMAND),
         // Letter key codes are deliberately explicit because macOS key codes
         // represent physical positions rather than Unicode characters.
         "A" => Some(0),
@@ -76,20 +84,6 @@ impl KeySample {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct HotkeySample {
-    pub session: KeySample,
-    pub hid: KeySample,
-}
-
-pub fn sample(hotkey: &HotkeyConfig) -> HotkeySample {
-    let read = |state| sample_with(hotkey, |key| unsafe { CGEventSourceKeyState(state, key) });
-    HotkeySample {
-        session: read(COMBINED_SESSION_STATE),
-        hid: read(HID_SYSTEM_STATE),
-    }
-}
-
 fn sample_with(hotkey: &HotkeyConfig, down: impl Fn(CGKeyCode) -> bool) -> KeySample {
     let modifiers_down = hotkey
         .modifiers
@@ -104,6 +98,348 @@ fn sample_with(hotkey: &HotkeyConfig, down: impl Fn(CGKeyCode) -> bool) -> KeySa
     KeySample {
         modifiers_down,
         key_down: key_code(&hotkey.key).is_some_and(down),
+    }
+}
+
+// Device-side masks from Apple's IOLLEvent.h. CG key-state booleans can alias
+// a physical right modifier to its left key code, so they cannot identify sides.
+fn modifier_flag(key: CGKeyCode) -> Option<u64> {
+    match key {
+        KEY_CONTROL => Some(0x1),
+        KEY_RIGHT_CONTROL => Some(0x2000),
+        KEY_SHIFT => Some(0x2),
+        KEY_RIGHT_SHIFT => Some(0x4),
+        KEY_OPTION => Some(0x20),
+        KEY_RIGHT_OPTION => Some(0x40),
+        KEY_COMMAND => Some(0x8),
+        KEY_RIGHT_COMMAND => Some(0x10),
+        _ => None,
+    }
+}
+
+// Normalized physical key-down booleans; no text or event history is retained.
+struct KeySnapshot([bool; 128], bool);
+
+impl KeySnapshot {
+    fn read_with(
+        configs: &(HotkeyConfig, HotkeyConfig),
+        flags: u64,
+        mut read: impl FnMut(CGKeyCode) -> bool,
+    ) -> Self {
+        let mut keys = std::array::from_fn(|key| {
+            modifier_flag(key as CGKeyCode).is_some_and(|mask| flags & mask != 0)
+        });
+        let mut read = |key| match modifier_flag(key) {
+            Some(mask) => flags & mask != 0,
+            None => read(key),
+        };
+        for config in [&configs.0, &configs.1] {
+            if let Some(key) = key_code(&config.key) {
+                keys[key as usize] = read(key);
+            }
+        }
+        let checking_exclusivity = [&configs.0, &configs.1].iter().any(|config| {
+            config.modifiers.is_empty()
+                && matches!(config.key.as_str(), "AltRight" | "MetaRight")
+                && key_code(&config.key).is_some_and(|key| keys[key as usize])
+        });
+        if checking_exclusivity {
+            for (key, state) in keys.iter_mut().enumerate() {
+                *state = read(key as CGKeyCode);
+            }
+        }
+        Self(keys, checking_exclusivity)
+    }
+
+    fn conflicts(&self, config: &HotkeyConfig) -> Option<usize> {
+        self.1.then(|| {
+            self.0
+                .iter()
+                .enumerate()
+                .filter(|(key, down)| **down && Some(*key as CGKeyCode) != key_code(&config.key))
+                .count()
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Transition {
+    triggers: (KeySample, KeySample),
+    active: (bool, bool),
+    blocked: (bool, bool),
+}
+
+impl Transition {
+    fn log(self, configs: &(HotkeyConfig, HotkeyConfig), keys: &KeySnapshot) {
+        tracing::info!(
+            dictation_trigger = self.triggers.0.key_down,
+            dictation_modifiers = self.triggers.0.modifiers_down,
+            scribe_trigger = self.triggers.1.key_down,
+            scribe_modifiers = self.triggers.1.modifiers_down,
+            dictation_active = self.active.0, scribe_active = self.active.1,
+            dictation_blocked = self.blocked.0, scribe_blocked = self.blocked.1,
+            dictation_conflicts = ?keys.conflicts(&configs.0),
+            scribe_conflicts = ?keys.conflicts(&configs.1),
+            full_scan = keys.1,
+            normalized_ctrl = ?(keys.0[59], keys.0[62]),
+            normalized_shift = ?(keys.0[56], keys.0[60]),
+            normalized_alt = ?(keys.0[58], keys.0[61]),
+            normalized_meta = ?(keys.0[55], keys.0[54]),
+            // Nonmodifier raw key states are only read during the conflict scan.
+            raw_caps_lock = ?keys.1.then_some(keys.0[57]),
+            raw_function = ?keys.1.then_some(keys.0[63]),
+            raw_num_lock = ?keys.1.then_some(keys.0[71]),
+            "hotkey sampler transition"
+        );
+    }
+}
+
+#[derive(Default)]
+struct PendingPresses(u8);
+
+impl PendingPresses {
+    fn record(&mut self, rising: bool) {
+        if rising {
+            // Saturating would lose parity; wrapping would lose 'any press'.
+            self.0 = if self.0 == u8::MAX {
+                u8::MAX - 1
+            } else {
+                self.0 + 1
+            };
+        }
+    }
+
+    fn drain(&mut self, down: bool) -> HotkeyState {
+        let presses = std::mem::take(&mut self.0);
+        HotkeyState {
+            down,
+            pressed: presses > 0,
+            sampled_presses: Some(presses),
+        }
+    }
+}
+
+#[derive(Default)]
+struct KeyTracker {
+    started: Option<Duration>,
+    blocked: bool,
+    active: bool,
+}
+
+#[derive(Default)]
+struct Sample {
+    down: bool,
+    cancelled: bool,
+}
+
+impl KeyTracker {
+    fn update(&mut self, config: &HotkeyConfig, keys: &KeySnapshot, now: Duration) -> Sample {
+        let standalone =
+            config.modifiers.is_empty() && matches!(config.key.as_str(), "AltRight" | "MetaRight");
+        if !standalone {
+            self.active = sample_with(config, |key| keys.0[key as usize]).down();
+            return Sample {
+                down: self.active,
+                cancelled: false,
+            };
+        }
+        // Standalone keys are holds only; reject malformed persisted tap bindings.
+        if config.behavior != HotkeyBehavior::Hold {
+            return Sample::default();
+        }
+        let key = key_code(&config.key).unwrap() as usize;
+        let other = keys
+            .0
+            .iter()
+            .enumerate()
+            .any(|(index, down)| index != key && *down);
+        let cancelled = self.active && other;
+        if !keys.0[key] {
+            *self = Self::default();
+            return Sample {
+                down: false,
+                cancelled,
+            };
+        }
+        if other {
+            self.blocked = true;
+            self.started = None;
+        }
+        self.active = !self.blocked
+            && now.saturating_sub(*self.started.get_or_insert(now)) >= Duration::from_millis(250);
+        Sample {
+            down: self.active,
+            cancelled,
+        }
+    }
+}
+
+#[derive(Default)]
+struct PollingState {
+    configs: Option<(HotkeyConfig, HotkeyConfig)>,
+    trackers: (KeyTracker, KeyTracker),
+    down: (bool, bool),
+    cancelled: (bool, bool),
+    presses: (PendingPresses, PendingPresses),
+    last_transition: Option<Transition>,
+}
+
+impl PollingState {
+    fn configure(&mut self, dictation: &HotkeyConfig, scribe: &HotkeyConfig) {
+        if self
+            .configs
+            .as_ref()
+            .is_some_and(|pair| pair.0 == *dictation && pair.1 == *scribe)
+        {
+            return;
+        }
+        self.cancelled.0 |= self.down.0;
+        self.cancelled.1 |= self.down.1;
+        self.down = (false, false);
+        self.presses = Default::default();
+        self.trackers = Default::default();
+        self.last_transition = None;
+        tracing::info!(
+            dictation_key = %dictation.key, dictation_behavior = ?dictation.behavior,
+            scribe_key = %scribe.key, scribe_behavior = ?scribe.behavior,
+            "hotkey sampler configuration reset; standalone threshold 250ms, poll 8ms"
+        );
+        self.configs = Some((dictation.clone(), scribe.clone()));
+    }
+
+    fn update(&mut self, keys: &KeySnapshot, now: Duration) -> Option<Transition> {
+        if let Some((dictation, scribe)) = &self.configs {
+            let d = self.trackers.0.update(dictation, keys, now);
+            let s = self.trackers.1.update(scribe, keys, now);
+            self.presses.0.record(d.down && !self.down.0);
+            self.presses.1.record(s.down && !self.down.1);
+            self.down = (d.down, s.down);
+            self.cancelled.0 |= d.cancelled;
+            self.cancelled.1 |= s.cancelled;
+            let transition = Transition {
+                triggers: (
+                    sample_with(dictation, |key| keys.0[key as usize]),
+                    sample_with(scribe, |key| keys.0[key as usize]),
+                ),
+                active: self.down,
+                blocked: (self.trackers.0.blocked, self.trackers.1.blocked),
+            };
+            if self.last_transition != Some(transition) {
+                self.last_transition = Some(transition);
+                return Some(transition);
+            }
+        }
+        None
+    }
+
+    fn drain(&mut self) -> ((HotkeyState, HotkeyState), (bool, bool)) {
+        let cancelled = std::mem::take(&mut self.cancelled);
+        (
+            (
+                self.presses.0.drain(self.down.0),
+                self.presses.1.drain(self.down.1),
+            ),
+            cancelled,
+        )
+    }
+}
+
+pub struct HotkeyMonitor {
+    state: Arc<Mutex<PollingState>>,
+    stop: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
+    cancelled: (bool, bool),
+}
+
+impl HotkeyMonitor {
+    pub fn start() -> std::io::Result<Self> {
+        let state = Arc::new(Mutex::new(PollingState::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_state = Arc::clone(&state);
+        let worker_stop = Arc::clone(&stop);
+        let worker = thread::Builder::new()
+            .name("quill-hotkeys".into())
+            .spawn(move || {
+                let start = Instant::now();
+                tracing::info!(
+                    input_monitoring = unsafe { CGPreflightListenEventAccess() },
+                    "macOS shortcut input permission status"
+                );
+                while !worker_stop.load(Ordering::Relaxed) {
+                    {
+                        let mut state = worker_state.lock().unwrap();
+                        if let Some(configs) = &state.configs {
+                            let flags = unsafe { CGEventSourceFlagsState(COMBINED_SESSION_STATE) };
+                            let snapshot = KeySnapshot::read_with(configs, flags, |key| unsafe {
+                                CGEventSourceKeyState(COMBINED_SESSION_STATE, key)
+                            });
+                            if let Some(transition) = state.update(&snapshot, start.elapsed()) {
+                                transition.log(state.configs.as_ref().unwrap(), &snapshot);
+                            }
+                        }
+                    }
+                    thread::sleep(Duration::from_millis(8));
+                }
+            })?;
+        Ok(Self {
+            state,
+            stop,
+            worker: Some(worker),
+            cancelled: (false, false),
+        })
+    }
+
+    pub fn drain_pair(
+        &mut self,
+        dictation: &HotkeyConfig,
+        scribe: &HotkeyConfig,
+    ) -> Vec<(HotkeyState, HotkeyState)> {
+        let mut state = self.state.lock().unwrap();
+        state.configure(dictation, scribe);
+        let (pair, cancelled) = state.drain();
+        self.cancelled.0 |= cancelled.0;
+        self.cancelled.1 |= cancelled.1;
+        vec![pair]
+    }
+
+    /// Consume immediately after drain_pair, before finishing a released session.
+    pub fn take_cancelled(&mut self) -> (bool, bool) {
+        std::mem::take(&mut self.cancelled)
+    }
+}
+
+impl Drop for HotkeyMonitor {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+/// Injected samples exercise the actual producer/consumer contract without OS input.
+#[cfg(test)]
+pub(crate) struct TestSampler(PollingState);
+
+#[cfg(test)]
+impl TestSampler {
+    pub(crate) fn new(dictation: &HotkeyConfig, scribe: &HotkeyConfig) -> Self {
+        let mut state = PollingState::default();
+        state.configure(dictation, scribe);
+        Self(state)
+    }
+
+    pub(crate) fn update(&mut self, down: &[u16], millis: u64) {
+        let mut keys = [false; 128];
+        for &key in down {
+            keys[key as usize] = true;
+        }
+        self.0
+            .update(&KeySnapshot(keys, true), Duration::from_millis(millis));
+    }
+
+    pub(crate) fn drain(&mut self) -> (HotkeyState, HotkeyState) {
+        self.0.drain().0
     }
 }
 
@@ -134,5 +470,375 @@ mod tests {
             assert!(!sample_with(&config, |key| key == 2).down());
             assert!(!sample_with(&config, |key| key == left).down());
         }
+    }
+
+    fn standalone(key: &str) -> HotkeyConfig {
+        HotkeyConfig {
+            modifiers: vec![],
+            key: key.into(),
+            behavior: HotkeyBehavior::Hold,
+        }
+    }
+
+    fn keys(down: &[u16]) -> KeySnapshot {
+        let mut keys = [false; 128];
+        for &key in down {
+            keys[key as usize] = true;
+        }
+        KeySnapshot(keys, true)
+    }
+
+    #[test]
+    fn standalone_requires_250ms_and_only_the_right_side() {
+        for (name, right, left) in [("AltRight", 61, 58), ("MetaRight", 54, 55)] {
+            let mut tracker = KeyTracker::default();
+            let config = standalone(name);
+            assert!(!tracker.update(&config, &keys(&[left]), Duration::ZERO).down);
+            assert!(
+                !tracker
+                    .update(&config, &keys(&[right]), Duration::from_millis(10))
+                    .down
+            );
+            assert!(
+                !tracker
+                    .update(&config, &keys(&[right]), Duration::from_millis(259))
+                    .down
+            );
+            assert!(
+                tracker
+                    .update(&config, &keys(&[right]), Duration::from_millis(260))
+                    .down
+            );
+            assert!(
+                !tracker
+                    .update(&config, &keys(&[]), Duration::from_millis(270))
+                    .down
+            );
+        }
+    }
+
+    #[test]
+    fn every_other_key_blocks_activation_until_modifier_release() {
+        for other in (0..128).filter(|key| *key != 54) {
+            let mut tracker = KeyTracker::default();
+            let config = standalone("MetaRight");
+            tracker.update(&config, &keys(&[54]), Duration::ZERO);
+            assert!(
+                !tracker
+                    .update(&config, &keys(&[54, other]), Duration::from_millis(100))
+                    .down
+            );
+            assert!(
+                !tracker
+                    .update(&config, &keys(&[54]), Duration::from_millis(1000))
+                    .down
+            );
+            tracker.update(&config, &keys(&[]), Duration::from_millis(1010));
+            tracker.update(&config, &keys(&[54]), Duration::from_millis(1020));
+            assert!(
+                tracker
+                    .update(&config, &keys(&[54]), Duration::from_millis(1270))
+                    .down
+            );
+        }
+    }
+
+    #[test]
+    fn contamination_after_activation_cancels_instead_of_finishing() {
+        let mut tracker = KeyTracker::default();
+        let config = standalone("MetaRight");
+        tracker.update(&config, &keys(&[54]), Duration::ZERO);
+        assert!(
+            tracker
+                .update(&config, &keys(&[54]), Duration::from_millis(250))
+                .down
+        );
+        let sample = tracker.update(&config, &keys(&[54, 8]), Duration::from_millis(260));
+        assert!(sample.cancelled);
+        assert!(!sample.down);
+        assert!(
+            !tracker
+                .update(&config, &keys(&[54]), Duration::from_millis(500))
+                .down
+        );
+    }
+
+    #[test]
+    fn cancellation_survives_a_blocked_consumer_and_is_consumed_once() {
+        let mut state = PollingState::default();
+        state.configure(&standalone("AltRight"), &standalone("MetaRight"));
+        state.update(&keys(&[54]), Duration::ZERO);
+        state.update(&keys(&[54]), Duration::from_millis(250));
+        assert!(state.drain().0 .1.down);
+        // Audio initialization/session work is blocked while the sampler sees Cmd+C.
+        state.update(&keys(&[54, 8]), Duration::from_millis(400));
+        state.update(&keys(&[]), Duration::from_millis(420));
+        state.update(&keys(&[]), Duration::from_millis(2409));
+        let (down, cancelled) = state.drain();
+        assert!(!down.1.down);
+        assert_eq!(cancelled, (false, true));
+        assert_eq!(state.drain().1, (false, false));
+    }
+
+    #[test]
+    fn idle_default_sampling_needs_no_key_state_reads() {
+        let configs = (standalone("AltRight"), standalone("MetaRight"));
+        let mut calls = vec![];
+        let _ = KeySnapshot::read_with(&configs, 0, |key| {
+            calls.push(key);
+            false
+        });
+        assert!(calls.is_empty());
+        calls.clear();
+        let snapshot = KeySnapshot::read_with(&configs, 0x10, |key| {
+            calls.push(key);
+            key == 54 || key == 8
+        });
+        assert!(snapshot.0[8]);
+        assert!(calls.contains(&127));
+        assert_eq!(calls.len(), 120);
+        assert!(calls.iter().all(|key| modifier_flag(*key).is_none()));
+    }
+
+    #[test]
+    fn physical_right_flags_override_aliased_left_key_state() {
+        let configs = (standalone("AltRight"), standalone("MetaRight"));
+        for (name, right, left, flag) in [("AltRight", 61, 58, 0x40), ("MetaRight", 54, 55, 0x10)] {
+            // Physical evidence: right-side flags, but CGKeyState reports only left.
+            let snapshot = KeySnapshot::read_with(&configs, flag, |key| key == left);
+            let mut tracker = KeyTracker::default();
+            let config = standalone(name);
+            assert!(!tracker.update(&config, &snapshot, Duration::ZERO).down);
+            assert!(
+                !tracker
+                    .update(&config, &snapshot, Duration::from_millis(249))
+                    .down
+            );
+            assert!(
+                tracker
+                    .update(&config, &snapshot, Duration::from_millis(250))
+                    .down
+            );
+            assert!(snapshot.0[right]);
+            assert!(
+                !snapshot.0[left as usize],
+                "aggregate left state must not contaminate exclusivity"
+            );
+            assert_eq!(snapshot.conflicts(&config), Some(0));
+        }
+    }
+
+    #[test]
+    fn physical_left_only_and_both_sides_do_not_activate() {
+        let configs = (standalone("AltRight"), standalone("MetaRight"));
+        for (name, left_flag, right_flag) in [("AltRight", 0x20, 0x40), ("MetaRight", 0x8, 0x10)] {
+            for flags in [left_flag, left_flag | right_flag] {
+                // Even misleading raw right booleans must not override side flags.
+                let snapshot =
+                    KeySnapshot::read_with(&configs, flags, |key| key == 61 || key == 54);
+                let mut tracker = KeyTracker::default();
+                let config = standalone(name);
+                tracker.update(&config, &snapshot, Duration::ZERO);
+                assert!(
+                    !tracker
+                        .update(&config, &snapshot, Duration::from_secs(2))
+                        .down
+                );
+                assert_eq!(
+                    snapshot.conflicts(&config),
+                    (flags == (left_flag | right_flag)).then_some(1)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn physical_modifier_snapshot_preserves_custom_either_side_chords() {
+        for (modifier, left, right, left_flag, right_flag) in [
+            ("Ctrl", 59, 62, 0x1, 0x2000),
+            ("Shift", 56, 60, 0x2, 0x4),
+            ("Alt", 58, 61, 0x20, 0x40),
+            ("Meta", 55, 54, 0x8, 0x10),
+        ] {
+            let config = HotkeyConfig {
+                modifiers: vec![modifier.into()],
+                key: "D".into(),
+                behavior: HotkeyBehavior::Hold,
+            };
+            let configs = (config.clone(), standalone("MetaRight"));
+            for flags in [left_flag, right_flag, left_flag | right_flag] {
+                let snapshot = KeySnapshot::read_with(&configs, flags, |key| key == 2);
+                assert!(
+                    sample_with(&config, |key| snapshot.0[key as usize]).down(),
+                    "{modifier} flags {flags}"
+                );
+                assert_eq!(snapshot.0[left], flags & left_flag != 0);
+                assert_eq!(snapshot.0[right], flags & right_flag != 0);
+            }
+            let snapshot = KeySnapshot::read_with(&configs, 0, |key| {
+                key == 2 || key == left as u16 || key == right as u16
+            });
+            assert!(!sample_with(&config, |key| snapshot.0[key as usize]).down());
+        }
+    }
+
+    #[test]
+    fn normalized_scan_keeps_every_other_key_cancellation_and_latch() {
+        let configs = (standalone("AltRight"), standalone("MetaRight"));
+        for other in (0..128).filter(|key| *key != KEY_RIGHT_COMMAND) {
+            let flags = 0x10 | modifier_flag(other).unwrap_or(0);
+            let mut state = PollingState::default();
+            state.configure(&configs.0, &configs.1);
+            let clean = KeySnapshot::read_with(&configs, 0x10, |key| key == 55);
+            state.update(&clean, Duration::ZERO);
+            state.update(&clean, Duration::from_millis(250));
+            assert!(state.drain().0 .1.down);
+            let contaminated =
+                KeySnapshot::read_with(&configs, flags, |key| key == 55 || key == other);
+            state.update(&contaminated, Duration::from_millis(258));
+            state.update(&clean, Duration::from_secs(2));
+            let (pair, cancelled) = state.drain();
+            assert!(!pair.1.down);
+            assert_eq!(cancelled, (false, true));
+            assert_eq!(state.drain().1, (false, false));
+            state.update(
+                &KeySnapshot::read_with(&configs, 0, |_| false),
+                Duration::from_millis(2008),
+            );
+            state.update(&clean, Duration::from_millis(2016));
+            state.update(&clean, Duration::from_millis(2266));
+            assert!(state.drain().0 .1.down);
+        }
+    }
+
+    #[test]
+    fn completed_custom_stop_tap_survives_a_delayed_drain() {
+        let config = HotkeyConfig {
+            modifiers: vec!["Ctrl".into()],
+            key: "Space".into(),
+            behavior: HotkeyBehavior::TapToLock,
+        };
+        let mut state = PollingState::default();
+        state.configure(&config, &standalone("MetaRight"));
+        state.update(&keys(&[59, 49]), Duration::ZERO);
+        state.drain();
+        state.update(&keys(&[]), Duration::from_millis(8));
+        state.drain();
+        state.update(&keys(&[59, 49]), Duration::from_millis(16));
+        state.update(&keys(&[]), Duration::from_millis(24));
+        let (pair, _) = state.drain();
+        assert!(!pair.0.down);
+        assert!(pair.0.pressed, "the stop tap must survive ASR awaiting");
+        assert_eq!(pair.0.press_count(true), 1);
+        assert_eq!(pair.0.press_count(false), 1);
+        assert!(!state.drain().0 .0.pressed);
+    }
+
+    #[test]
+    fn delayed_presses_preserve_parity_even_past_counter_capacity() {
+        let config = HotkeyConfig {
+            modifiers: vec!["Ctrl".into()],
+            key: "Space".into(),
+            behavior: HotkeyBehavior::TapToLock,
+        };
+        for count in [1, 2, 3, 254, 255, 256, 257, 1024] {
+            let mut state = TestSampler::new(&config, &standalone("MetaRight"));
+            for index in 0..count {
+                state.update(&[59, 49], index * 16);
+                state.update(&[], index * 16 + 8);
+            }
+            let presses = state.drain().0.press_count(false);
+            assert!(presses > 0);
+            assert_eq!(u64::from(presses % 2), count % 2, "{count} presses");
+            assert_eq!(state.drain().0.press_count(false), 0);
+        }
+    }
+
+    #[test]
+    fn held_final_sample_does_not_recount_a_drained_press() {
+        let config = HotkeyConfig {
+            modifiers: vec!["Ctrl".into()],
+            key: "Space".into(),
+            behavior: HotkeyBehavior::TapToLock,
+        };
+        let mut state = TestSampler::new(&config, &standalone("MetaRight"));
+        state.update(&[59, 49], 0);
+        assert_eq!(state.drain().0.press_count(false), 1);
+        state.update(&[], 8);
+        state.update(&[59, 49], 16);
+        // The consumer still remembers 'down', but the sampler saw a new press.
+        let next = state.drain().0;
+        assert!(next.down);
+        assert_eq!(next.press_count(true), 1);
+        assert_eq!(state.drain().0.press_count(false), 0);
+    }
+
+    #[test]
+    fn reconfiguration_discards_pending_old_binding_presses() {
+        let mut state = PollingState::default();
+        state.configure(&standalone("AltRight"), &standalone("MetaRight"));
+        state.update(&keys(&[61]), Duration::ZERO);
+        state.update(&keys(&[61]), Duration::from_millis(250));
+        state.configure(&standalone("MetaRight"), &standalone("AltRight"));
+        let (pair, cancelled) = state.drain();
+        assert_eq!(pair.0.press_count(false), 0);
+        assert_eq!(cancelled, (true, false));
+        assert!(state.last_transition.is_none());
+    }
+
+    #[test]
+    fn diagnostics_only_change_on_trigger_or_activation_transitions() {
+        let mut state = PollingState::default();
+        state.configure(&standalone("AltRight"), &standalone("MetaRight"));
+        assert!(state.update(&keys(&[]), Duration::ZERO).is_some());
+        assert!(state.update(&keys(&[]), Duration::from_millis(8)).is_none());
+        let held = state
+            .update(&keys(&[61]), Duration::from_millis(16))
+            .unwrap();
+        assert!(held.triggers.0.key_down);
+        assert!(!held.active.0 && !held.blocked.0);
+        assert!(state
+            .update(&keys(&[61]), Duration::from_millis(265))
+            .is_none());
+        assert!(
+            state
+                .update(&keys(&[61]), Duration::from_millis(266))
+                .unwrap()
+                .active
+                .0
+        );
+        let blocked = state
+            .update(&keys(&[61, 57]), Duration::from_millis(274))
+            .unwrap();
+        assert!(blocked.blocked.0 && !blocked.active.0);
+        assert!(state
+            .update(&keys(&[61, 57, 8]), Duration::from_millis(282))
+            .is_none());
+        assert_eq!(
+            keys(&[61, 57, 63, 71]).conflicts(&standalone("AltRight")),
+            Some(3)
+        );
+        let idle = KeySnapshot([false; 128], false);
+        assert_eq!(idle.conflicts(&standalone("AltRight")), None);
+        assert!(state
+            .update(&keys(&[]), Duration::from_millis(290))
+            .is_some());
+    }
+
+    #[test]
+    fn short_taps_and_clean_release_never_cancel() {
+        let config = standalone("AltRight");
+        let mut tracker = KeyTracker::default();
+        assert!(!tracker.update(&config, &keys(&[61]), Duration::ZERO).down);
+        let short = tracker.update(&config, &keys(&[]), Duration::from_millis(249));
+        assert!(!short.down && !short.cancelled);
+        tracker.update(&config, &keys(&[61]), Duration::from_millis(300));
+        assert!(
+            tracker
+                .update(&config, &keys(&[61]), Duration::from_millis(550))
+                .down
+        );
+        let released = tracker.update(&config, &keys(&[]), Duration::from_millis(560));
+        assert!(!released.down && !released.cancelled);
     }
 }

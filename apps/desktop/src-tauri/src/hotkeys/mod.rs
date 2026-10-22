@@ -10,51 +10,24 @@ pub use windows::HotkeyMonitor;
 pub struct HotkeyState {
     pub down: bool,
     pub pressed: bool,
+    /// Authoritative sampled rising edges since the last drain, including zero.
+    /// Above 255 edges the count remains nonzero and preserves odd/even parity.
+    #[cfg(target_os = "macos")]
+    pub sampled_presses: Option<u8>,
 }
 
-#[cfg(target_os = "macos")]
-pub struct HotkeyMonitor {
-    last_down: (bool, bool),
-}
-
-#[cfg(target_os = "macos")]
-impl HotkeyMonitor {
-    pub fn start() -> anyhow::Result<Self> {
-        Ok(Self {
-            last_down: (false, false),
-        })
-    }
-
-    pub fn drain_pair(
-        &mut self,
-        dictation: &crate::model::HotkeyConfig,
-        scribe: &crate::model::HotkeyConfig,
-    ) -> Vec<(HotkeyState, HotkeyState)> {
-        let dictation_sample = macos::sample(dictation);
-        let scribe_sample = macos::sample(scribe);
-        let down = (
-            dictation_sample.session.down(),
-            scribe_sample.session.down(),
-        );
-        if down != self.last_down {
-            tracing::info!(
-                dictation_session = ?dictation_sample.session,
-                dictation_hid = ?dictation_sample.hid,
-                scribe_session = ?scribe_sample.session,
-                scribe_hid = ?scribe_sample.hid,
-                "macOS shortcut state changed"
-            );
-            self.last_down = down;
+impl HotkeyState {
+    pub fn press_count(self, was_down: bool) -> u8 {
+        #[cfg(target_os = "macos")]
+        if let Some(presses) = self.sampled_presses {
+            return presses;
         }
-        vec![(
-            HotkeyState {
-                down: down.0,
-                pressed: false,
-            },
-            HotkeyState {
-                down: down.1,
-                pressed: false,
-            },
-        )]
+        u8::from((self.down || self.pressed) && !was_down)
     }
 }
+
+#[cfg(target_os = "macos")]
+pub use macos::HotkeyMonitor;
+
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) use macos::TestSampler;

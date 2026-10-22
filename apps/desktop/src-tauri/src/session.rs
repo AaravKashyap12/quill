@@ -304,6 +304,28 @@ async fn run(
         }
         let state_changes =
             hotkey_monitor.drain_pair(&settings.dictation_hotkey, &settings.scribe_hotkey);
+        #[cfg(target_os = "macos")]
+        {
+            // A standalone modifier becoming a keyboard chord is cancellation,
+            // never a normal release that would transcribe/upload its audio.
+            // The monitor latches this while microphone/ASR startup is awaiting.
+            let (cancel_dictation, cancel_scribe) = hotkey_monitor.take_cancelled();
+            if cancel_dictation {
+                dictation_key.unlock();
+            }
+            if cancel_scribe {
+                scribe_key.unlock();
+            }
+            let cancel_active = active.as_ref().is_some_and(|session| match session.mode {
+                Mode::Dictation => cancel_dictation,
+                Mode::Scribe => cancel_scribe,
+            });
+            if cancel_active {
+                if let Some(session) = active.take() {
+                    session.cancel(&app);
+                }
+            }
+        }
         // The settings UI captures a new shortcut by listening for a keypress
         // in a focused button. Actually firing the mode in parallel would open
         // the overlay every time the user pressed their current hotkey. While
@@ -400,16 +422,15 @@ struct KeyRuntime {
 
 impl KeyRuntime {
     fn update(&mut self, state: hotkeys::HotkeyState, config: &HotkeyConfig) -> bool {
-        // Prefer the physical rising edge. The low GetAsyncKeyState bit is
-        // retained only for taps that happen entirely between two polls.
-        let pressed =
-            (state.down && !self.was_down) || (state.pressed && !state.down && !self.was_down);
+        // macOS retains sampled presses while ASR awaits; Windows keeps its
+        // existing physical-edge / short-tap fallback.
+        let presses = state.press_count(self.was_down);
         self.was_down = state.down;
-        self.just_pressed = pressed;
+        self.just_pressed = presses > 0;
         match config.behavior {
             HotkeyBehavior::Hold => state.down,
             HotkeyBehavior::TapToLock => {
-                if pressed {
+                if presses % 2 == 1 {
                     self.locked = !self.locked;
                 }
                 self.locked
@@ -452,6 +473,23 @@ struct ActiveSession {
 }
 
 impl ActiveSession {
+    #[cfg(target_os = "macos")]
+    fn cancel(self, app: &AppHandle) {
+        self.meter_running.store(false, Ordering::Release);
+        if let Err(error) = recovery::clear_if_matches(&self.recovery_id) {
+            tracing::warn!(%error, "could not clear cancelled recording recovery");
+        }
+        hide_overlay(app);
+        emit_status(
+            app,
+            "ready",
+            None,
+            "Recording cancelled for keyboard shortcut",
+            None,
+        );
+        // Dropping AudioCapture stops the microphone. Do not call finish().
+    }
+
     fn start(
         mode: Mode,
         settings: AppSettings,
@@ -1578,6 +1616,7 @@ mod tests {
             hotkeys::HotkeyState {
                 down: true,
                 pressed: true,
+                ..Default::default()
             },
             &config,
         ));
@@ -1586,6 +1625,7 @@ mod tests {
             hotkeys::HotkeyState {
                 down: true,
                 pressed: true,
+                ..Default::default()
             },
             &config,
         ));
@@ -1603,6 +1643,7 @@ mod tests {
             hotkeys::HotkeyState {
                 down: true,
                 pressed: true,
+                ..Default::default()
             },
             &config,
         ));
@@ -1625,10 +1666,12 @@ mod tests {
             hotkeys::HotkeyState {
                 down: true,
                 pressed: true,
+                ..Default::default()
             },
             hotkeys::HotkeyState {
                 down: false,
                 pressed: false,
+                ..Default::default()
             },
         ];
 
@@ -1636,5 +1679,55 @@ mod tests {
             runtime.update(event, &config);
         }
         assert!(runtime.active(&config));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_sampled_stop_tap_survives_asr_wait() {
+        let config = HotkeyConfig {
+            modifiers: vec!["Ctrl".into()],
+            key: "Space".into(),
+            behavior: HotkeyBehavior::TapToLock,
+        };
+        let mut sampler = hotkeys::TestSampler::new(&config, &config);
+        let mut runtime = KeyRuntime::default();
+        sampler.update(&[59, 49], 0);
+        assert!(runtime.update(sampler.drain().0, &config));
+        sampler.update(&[], 8);
+        assert!(runtime.update(sampler.drain().0, &config));
+
+        // The actual producer observes an entire stop tap while the session
+        // consumer is awaiting local transcription and cannot drain it.
+        sampler.update(&[59, 49], 800);
+        sampler.update(&[], 840);
+        assert!(!runtime.update(sampler.drain().0, &config));
+        assert!(!runtime.update(sampler.drain().0, &config));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_sampled_multiple_taps_preserve_parity_with_stale_held_state() {
+        let config = HotkeyConfig {
+            modifiers: vec!["Ctrl".into()],
+            key: "Space".into(),
+            behavior: HotkeyBehavior::TapToLock,
+        };
+        for taps in [2, 3, 256, 257] {
+            let mut sampler = hotkeys::TestSampler::new(&config, &config);
+            let mut runtime = KeyRuntime::default();
+            sampler.update(&[59, 49], 0);
+            assert!(runtime.update(sampler.drain().0, &config));
+            // No consumer drain after release: was_down remains true.
+            sampler.update(&[], 8);
+            for tap in 0..taps {
+                sampler.update(&[59, 49], 16 + tap * 16);
+                sampler.update(&[], 24 + tap * 16);
+            }
+            let expected_locked = taps % 2 == 0;
+            assert_eq!(runtime.update(sampler.drain().0, &config), expected_locked);
+            assert!(runtime.just_pressed);
+            assert_eq!(runtime.update(sampler.drain().0, &config), expected_locked);
+            assert!(!runtime.just_pressed);
+        }
     }
 }
