@@ -7,6 +7,8 @@ mod dictionary;
 mod downloads;
 mod hotkeys;
 mod injection;
+#[cfg(target_os = "macos")]
+mod macos_overlay;
 mod metrics;
 mod model;
 mod ollama;
@@ -509,6 +511,11 @@ pub fn run() {
         .manage(ollama::OllamaPullState::default())
         .setup(move |app| {
             setup_tray(app)?;
+
+            #[cfg(target_os = "macos")]
+            if let Err(error) = macos_overlay::configure(app) {
+                tracing::warn!(%error, "failed to configure macOS overlay Spaces behavior");
+            }
 
             // Bring the native frame into the design rather than inheriting a
             // dark caption bar that clashes with the warm paper interface.
