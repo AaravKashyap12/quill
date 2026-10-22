@@ -67,6 +67,58 @@ const navigation = [
 ];
 
 export function App() {
+  const overlayOnly = new URLSearchParams(window.location.search).has("overlay");
+  const reviewOnly = new URLSearchParams(window.location.search).has("review");
+  const overlayMode =
+    (new URLSearchParams(window.location.search).get("mode") as Mode | null) ?? "dictation";
+  const overlayDemo = new URLSearchParams(window.location.search).get("demo");
+
+  if (reviewOnly) {
+    return <ScribeReviewWindow />;
+  }
+
+  if (overlayOnly) {
+    const demoPhase =
+      overlayDemo === "review"
+        ? "reviewing"
+        : overlayDemo === "processing"
+          ? "transcribing"
+          : overlayDemo === "generating"
+            ? "generating"
+            : overlayDemo === "complete"
+              ? "complete"
+              : "recording";
+    const demoReview =
+      overlayDemo === "review"
+        ? {
+            id: 1,
+            source: "Tell Jordan I can do 5 PM tomorrow and send my calendar link.",
+            draft:
+              "Hi Jordan,\n\n5 PM tomorrow works for me. You can use my calendar link to schedule it.\n\nTalk soon.",
+            warning: null,
+            register: "email" as const,
+            action: "compose" as const,
+            contextLabel: "Gmail · Compose using nearby text",
+            contextAvailable: true,
+            contextUsed: true,
+            targetApp: "Gmail",
+          }
+        : null;
+    return (
+      <main className="overlay-page">
+        <RecordingOverlay
+          mode={overlayMode}
+          initialPhase={demoPhase}
+          demoReview={demoReview}
+        />
+      </main>
+    );
+  }
+
+  return <SettingsApp />;
+}
+
+function SettingsApp() {
   const [section, setSection] = useState<NavigationSection>("general");
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
@@ -85,12 +137,6 @@ export function App() {
     bytesTotal: FALLBACK_MODEL_BYTES,
     error: null,
   });
-  const overlayOnly = new URLSearchParams(window.location.search).has("overlay");
-  const reviewOnly = new URLSearchParams(window.location.search).has("review");
-  const overlayMode =
-    (new URLSearchParams(window.location.search).get("mode") as Mode | null) ?? "dictation";
-  const overlayDemo = new URLSearchParams(window.location.search).get("demo");
-
   /* Last persisted settings, so Discard can restore them without a reload. */
   const savedSettings = useRef<AppSettings>(defaultSettings);
 
@@ -493,48 +539,6 @@ export function App() {
           Math.round((speechSetup.bytesDownloaded / speechSetup.bytesTotal) * 100),
         )
       : 0;
-
-  if (reviewOnly) {
-    return <ScribeReviewWindow />;
-  }
-
-  if (overlayOnly) {
-    const demoPhase =
-      overlayDemo === "review"
-        ? "reviewing"
-        : overlayDemo === "processing"
-          ? "transcribing"
-          : overlayDemo === "generating"
-            ? "generating"
-            : overlayDemo === "complete"
-              ? "complete"
-              : "recording";
-    const demoReview =
-      overlayDemo === "review"
-        ? {
-            id: 1,
-            source: "Tell Jordan I can do 5 PM tomorrow and send my calendar link.",
-            draft:
-              "Hi Jordan,\n\n5 PM tomorrow works for me. You can use my calendar link to schedule it.\n\nTalk soon.",
-            warning: null,
-            register: "email" as const,
-            action: "compose" as const,
-            contextLabel: "Gmail · Compose using nearby text",
-            contextAvailable: true,
-            contextUsed: true,
-            targetApp: "Gmail",
-          }
-        : null;
-    return (
-      <main className="overlay-page">
-        <RecordingOverlay
-          mode={overlayMode}
-          initialPhase={demoPhase}
-          demoReview={demoReview}
-        />
-      </main>
-    );
-  }
 
   if (initialising || (onboardingRequired && !systemProfile)) {
     return (
