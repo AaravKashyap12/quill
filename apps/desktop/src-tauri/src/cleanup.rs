@@ -972,24 +972,7 @@ async fn clean_request_with_outcome(
                     anyhow!("Connect a Gemini API key in Voice settings before using Scribe.")
                 })?;
             let request_started = Instant::now();
-            let response = match client
-                .post(format!("{base_url}/models/{model}:generateContent"))
-                .header("x-goog-api-key", key)
-                .json(&serde_json::json!({
-                    "systemInstruction": {
-                        "parts": [{ "text": &request_prompt.system }]
-                    },
-                    "contents": [{
-                        "role": "user",
-                        "parts": [{ "text": &request_prompt.user }]
-                    }],
-                    "generationConfig": {
-                        "temperature": 0,
-                        "maxOutputTokens": MAX_GENERATED_TOKENS,
-                        "thinkingConfig": { "thinkingBudget": 0 }
-                    }
-                }))
-                .timeout(GEMINI_REQUEST_TIMEOUT)
+            let response = match gemini_request(&client, &base_url, &request_prompt, &key)
                 .send()
                 .await
             {
@@ -1059,6 +1042,33 @@ async fn clean_request_with_outcome(
         );
     }
     Ok(outcome)
+}
+
+fn gemini_request(
+    client: &Client,
+    base_url: &str,
+    prompt: &CleanupPrompt,
+    key: &str,
+) -> reqwest::RequestBuilder {
+    // Gemini 3 recommends temperature 1 and thinkingLevel; minimal is not a thinking-off guarantee.
+    client
+        .post(format!("{base_url}/models/{GEMINI_MODEL}:generateContent"))
+        .header("x-goog-api-key", key)
+        .json(&serde_json::json!({
+            "systemInstruction": {
+                "parts": [{ "text": &prompt.system }]
+            },
+            "contents": [{
+                "role": "user",
+                "parts": [{ "text": &prompt.user }]
+            }],
+            "generationConfig": {
+                "temperature": 1.0,
+                "maxOutputTokens": MAX_GENERATED_TOKENS,
+                "thinkingConfig": { "thinkingLevel": "minimal" }
+            }
+        }))
+        .timeout(GEMINI_REQUEST_TIMEOUT)
 }
 
 fn record_gemini_stage(metric: &str, value_ms: u128, outcome: &str) {
@@ -1208,6 +1218,35 @@ mod tests {
         assert_eq!(
             resolve_simple_corrections("send it Tuesday no wait Wednesday"),
             "send it Wednesday"
+        );
+    }
+
+    #[test]
+    fn gemini_request_uses_model_specific_low_latency_settings() {
+        let prompt = prompt_parts("move the meeting to Thursday", Register::Chat, None);
+        // Build only: no credentials, provider calls, or user data.
+        let request = gemini_request(&Client::new(), GEMINI_BASE_URL, &prompt, "test-only")
+            .build()
+            .unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(
+            request.url().as_str(),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent"
+        );
+        assert_eq!(request.method(), reqwest::Method::POST);
+        assert_eq!(request.url().query(), None);
+        assert_eq!(request.headers()["x-goog-api-key"], "test-only");
+        assert_eq!(request.timeout(), Some(&Duration::from_secs(45)));
+        assert_eq!(body["systemInstruction"]["parts"][0]["text"], prompt.system);
+        assert_eq!(body["contents"][0]["parts"][0]["text"], prompt.user);
+        assert_eq!(
+            body["generationConfig"],
+            serde_json::json!({
+                "temperature": 1.0,
+                "maxOutputTokens": 512,
+                "thinkingConfig": { "thinkingLevel": "minimal" }
+            })
         );
     }
 
