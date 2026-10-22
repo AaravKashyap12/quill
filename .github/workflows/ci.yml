@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pnpm install --frozen-lockfile
-      - run: python prototypes/test_scribe_buffer.py
+      - run: pnpm test
       - run: pnpm typecheck
       - run: pnpm build
 
