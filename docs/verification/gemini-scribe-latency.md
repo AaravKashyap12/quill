@@ -42,7 +42,7 @@ and [thinking guide](https://ai.google.dev/gemini-api/docs/generate-content/thin
 Flash-Lite already defaults to minimal thinking, and minimal does not guarantee
 zero thinking. The old parameter is not proven to have caused the long wait.
 Provider load, network conditions, and model behavior remain hypotheses. There
-is no measured speedup from this correction. Temperature may change draft
+is no controlled measurement attributing a speedup to this correction. Temperature may change draft
 wording; existing prompt boundaries, output guards, and review remain in place.
 
 The model, 512-token output cap, prompts, timeout, retry behavior, and telemetry
@@ -80,3 +80,19 @@ runs through the normal controls and compare `geminiRequestMs` and
 configuration for a speed claim; keep draft quality review separate from safe
 timing evidence. This offline change cannot certify provider response time or
 Windows parity.
+
+## Subsequent installed-app observations
+
+Two user-triggered Scribe runs on the combined build at approximately 11:16 UTC
+recorded Gemini request durations of **1,500 ms** and **4,608 ms**, with
+release-to-review durations of **1,782 ms** and **4,999 ms**. Both requests
+succeeded. These are faster observed sessions than the earlier 32,251 ms
+request, but the phrases and network/provider conditions were not controlled.
+They do not establish a causal speedup, a latency guarantee, or Windows parity.
+
+A later short run took **22,748 ms** in Gemini out of **23,354 ms** release-to-review
+(97.4%), while Groq took **588 ms**. The user subsequently retried and reported
+fast refinement. They chose to leave this behavior unchanged and keep review
+opening after refinement. Additional diagnostic work was stopped and removed.
+Free-tier scheduling, server load and network variation remain unproven
+explanations; these observations do not establish a macOS defect.
