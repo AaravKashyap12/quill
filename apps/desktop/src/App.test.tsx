@@ -75,4 +75,23 @@ describe("window startup ownership", () => {
       for (const cleanup of cleanups) if (typeof cleanup === "function") cleanup();
     }
   });
+
+  it("keeps cloud setup unchanged when a credential is inaccessible", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    vi.mocked(native.loadSettings).mockResolvedValueOnce({ ...defaultSettings, transcriptionProvider: "groq" });
+    vi.mocked(native.getProviderKeyStatus).mockResolvedValueOnce({
+      provider: "groq", configured: false, status: "error", message: "Keychain access denied",
+    });
+    renderToStaticMarkup(<App />);
+    const cleanups = effects.map((effect) => effect());
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(native.loadSettings).toHaveBeenCalledOnce();
+      expect(native.getProviderKeyStatus).toHaveBeenCalledTimes(2);
+      expect(native.persistSettings).not.toHaveBeenCalled();
+      expect(native.testProviderConnection).not.toHaveBeenCalled();
+    } finally {
+      for (const cleanup of cleanups) if (typeof cleanup === "function") cleanup();
+    }
+  });
 });

@@ -1,4 +1,5 @@
 import { AlertCircle, Check, Download, PenLine, RotateCcw } from "lucide-react";
+import type { AppSettings } from "../types";
 
 export interface SpeechSetupState {
   phase: "checking" | "missing" | "downloading" | "ready" | "error";
@@ -9,6 +10,7 @@ export interface SpeechSetupState {
 }
 
 interface FirstRunSetupProps {
+  speechProvider: AppSettings["transcriptionProvider"];
   speech: SpeechSetupState;
   showScribeSetup: boolean;
   onOpenVoice: (target: "speech" | "scribe") => void;
@@ -29,6 +31,7 @@ function progressPercent(speech: SpeechSetupState): number {
 }
 
 export function FirstRunSetup({
+  speechProvider,
   speech,
   showScribeSetup,
   onOpenVoice,
@@ -41,6 +44,7 @@ export function FirstRunSetup({
   const percent = progressPercent(speech);
   const downloading = speech.phase === "downloading";
   const failed = speech.phase === "error" || speech.phase === "missing";
+  const cloudSpeech = speechProvider !== "local";
 
   return (
     <section className="first-run-setup" aria-labelledby="first-run-title">
@@ -80,10 +84,10 @@ export function FirstRunSetup({
               {downloading
                 ? `Downloading ${speech.modelId} automatically. Keep Quill open.`
                 : speech.phase === "checking"
-                  ? "Checking for a local speech model."
+                  ? cloudSpeech ? "Checking the speech connection." : "Checking for a local speech model."
                   : speech.phase === "ready"
-                    ? `${speech.modelId} is installed and selected.`
-                    : speech.error ?? "The speech model still needs to be downloaded."}
+                    ? cloudSpeech ? `${speech.modelId} is selected.` : `${speech.modelId} is installed and selected.`
+                    : speech.error ?? (cloudSpeech ? "Connect your speech provider." : "The speech model still needs to be downloaded.")}
             </p>
             {downloading ? (
               <>
@@ -104,8 +108,8 @@ export function FirstRunSetup({
             ) : null}
             {failed ? (
               <div className="setup-step__actions">
-                <button className="primary-button compact" type="button" onClick={onRetrySpeech}>
-                  <RotateCcw size={13} /> Retry download
+                <button className="primary-button compact" type="button" onClick={cloudSpeech ? () => onOpenVoice("speech") : onRetrySpeech}>
+                  <RotateCcw size={13} /> {cloudSpeech ? "Connect speech provider" : "Retry download"}
                 </button>
                 <button className="link-button" type="button" onClick={() => onOpenVoice("speech")}>
                   Voice settings

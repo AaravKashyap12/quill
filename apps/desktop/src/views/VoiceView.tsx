@@ -410,7 +410,7 @@ interface VoiceViewProps {
   providers: ProviderStatus[];
   cloudStatuses: ProviderKeyStatus[];
   onDetectProviders: () => Promise<void>;
-  onCloudStatusChange: () => Promise<void>;
+  onCloudStatusChange: (tested?: ProviderKeyStatus) => Promise<void>;
 }
 
 export function VoiceView({
@@ -736,7 +736,7 @@ export function VoiceView({
           message: tested.status === "connected" ? "Connected and ready" : tested.message ?? "Connection failed",
         },
       }));
-      await onCloudStatusChange();
+      await onCloudStatusChange(tested);
     } catch (error) {
       setCloudFeedback((current) => ({
         ...current,
@@ -754,7 +754,7 @@ export function VoiceView({
     setCloudBusy(provider);
     setCloudFeedback((current) => ({ ...current, [provider]: undefined }));
     try {
-      const tested = await testProviderConnection(provider);
+      const tested = await testProviderConnection(provider, true);
       setCloudFeedback((current) => ({
         ...current,
         [provider]: {
@@ -762,7 +762,7 @@ export function VoiceView({
           message: tested.status === "connected" ? "Connected and ready" : tested.message ?? "Connection failed",
         },
       }));
-      await onCloudStatusChange();
+      await onCloudStatusChange(tested);
     } catch (error) {
       setCloudFeedback((current) => ({
         ...current,
@@ -849,7 +849,7 @@ export function VoiceView({
               Get a {providerName} key <ExternalLink size={11} aria-hidden="true" />
             </button>
           ) : null}
-          {status?.configured ? (
+          {status?.configured || status?.status === "error" ? (
             <>
               <button
                 type="button"
@@ -857,16 +857,16 @@ export function VoiceView({
                 disabled={cloudBusy === provider}
                 onClick={() => void retestCloudKey(provider)}
               >
-                Test connection
+                {status.configured ? "Test connection" : "Retry access"}
               </button>
-              <button
+              {status.configured ? <button
                 type="button"
                 className="link-button is-danger"
                 disabled={cloudBusy === provider}
                 onClick={() => void removeCloudKey(provider)}
               >
                 Remove key
-              </button>
+              </button> : null}
             </>
           ) : null}
         </div>

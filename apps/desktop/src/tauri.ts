@@ -99,7 +99,11 @@ export async function getProviderKeyStatus(provider: CloudProvider): Promise<Pro
     const configured = window.localStorage.getItem(`quill.cloud.${provider}`) === "configured";
     return { provider, configured, status: configured ? "configured" : "missing", message: null };
   }
-  return invoke<ProviderKeyStatus>("get_provider_key_status", { provider });
+  try {
+    return await invoke<ProviderKeyStatus>("get_provider_key_status", { provider });
+  } catch (error) {
+    return { provider, configured: false, status: "error", message: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export async function setProviderKey(provider: CloudProvider, key: string): Promise<ProviderKeyStatus> {
@@ -119,9 +123,22 @@ export async function deleteProviderKey(provider: CloudProvider): Promise<Provid
   return invoke<ProviderKeyStatus>("delete_provider_key", { provider });
 }
 
-export async function testProviderConnection(provider: CloudProvider): Promise<ProviderKeyStatus> {
+export async function testProviderConnection(provider: CloudProvider, retryAccess = false): Promise<ProviderKeyStatus> {
   if (!isTauri()) return { provider, configured: true, status: "connected", message: null };
-  return invoke<ProviderKeyStatus>("test_provider_connection", { provider });
+  return invoke<ProviderKeyStatus>("test_provider_connection", { provider, retryAccess });
+}
+
+export function mergeProviderKeyStatuses(
+  previous: ProviderKeyStatus[], fresh: ProviderKeyStatus[], tested?: ProviderKeyStatus,
+): ProviderKeyStatus[] {
+  return fresh.map((status) => {
+    if (tested?.provider === status.provider) return tested;
+    // A vault status confirms presence, not connectivity. Preserve the last
+    // connection test until removal/access failure or a deliberate new test.
+    return status.configured
+      ? previous.find((item) => item.provider === status.provider && item.configured) ?? status
+      : status;
+  });
 }
 
 export async function listAudioInputDevices(): Promise<string[]> {

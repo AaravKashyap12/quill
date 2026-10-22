@@ -34,6 +34,7 @@ import {
   downloadWhisperModel,
   getSystemProfile,
   getProviderKeyStatus,
+  mergeProviderKeyStatuses,
   listInstalledWhisperModels,
   loadSettings,
   persistSettings,
@@ -187,18 +188,18 @@ function SettingsApp() {
           : loaded.transcriptionProvider === "gemini"
             ? checkedGemini
             : undefined;
-      if (selectedCloudSpeechStatus?.configured) {
+      if (selectedCloudSpeechStatus) {
         savedSettings.current = loaded;
         setSettings(loaded);
         setSpeechSetup({
-          phase: "ready",
+          phase: selectedCloudSpeechStatus.configured && selectedCloudSpeechStatus.status !== "error" ? "ready" : "error",
           modelId:
             loaded.transcriptionProvider === "gemini"
               ? "Gemini 3.5 Transcribe"
               : "Groq Cloud",
           bytesDownloaded: 0,
           bytesTotal: 0,
-          error: null,
+          error: selectedCloudSpeechStatus.message ?? (selectedCloudSpeechStatus.configured ? null : "Connect your selected speech provider in Voice settings."),
         });
         setOnboardingRequired(!loaded.onboardingCompleted);
         setInitialising(false);
@@ -363,31 +364,31 @@ function SettingsApp() {
     setProviders(await detectProviders());
   }
 
-  async function refreshCloudStatuses() {
+  async function refreshCloudStatuses(tested?: ProviderKeyStatus) {
     const statuses = await Promise.all([
       getProviderKeyStatus("groq"),
       getProviderKeyStatus("gemini"),
     ]);
-    setCloudStatuses(statuses);
+    setCloudStatuses((previous) => mergeProviderKeyStatuses(previous, statuses, tested));
     const speechProvider =
       settings.transcriptionProvider === "groq"
         ? "groq"
         : settings.transcriptionProvider === "gemini"
           ? "gemini"
           : null;
-    const speechStatus = statuses.find(
+    const speechStatus = mergeProviderKeyStatuses(cloudStatuses, statuses, tested).find(
       (status) => status.provider === speechProvider,
     );
-    if (speechProvider && speechStatus?.configured) {
+    if (speechProvider && speechStatus) {
       setSpeechSetup({
-        phase: "ready",
+        phase: speechStatus.configured && speechStatus.status !== "error" ? "ready" : "error",
         modelId:
           speechProvider === "gemini"
             ? "Gemini 3.5 Transcribe"
             : "Groq Cloud",
         bytesDownloaded: 0,
         bytesTotal: 0,
-        error: null,
+        error: speechStatus.message ?? (speechStatus.configured ? null : "Connect your selected speech provider in Voice settings."),
       });
     }
   }
@@ -485,7 +486,7 @@ function SettingsApp() {
     key?: string,
   ): Promise<ProviderKeyStatus> {
     if (key?.trim()) await setProviderKey(provider, key.trim());
-    const tested = await testProviderConnection(provider);
+    const tested = await testProviderConnection(provider, !key?.trim());
     setCloudStatuses((current) => [
       ...current.filter((status) => status.provider !== provider),
       tested,
@@ -601,7 +602,7 @@ function SettingsApp() {
               type="button"
               className={`sidebar-download is-${speechSetup.phase}`}
               onClick={() => openVoiceSetup("speech")}
-              aria-label="Open speech model setup"
+              aria-label="Open speech setup"
             >
               <span className="sidebar-download__title">
                 {speechSetup.phase === "error" || speechSetup.phase === "missing" ? (
@@ -610,7 +611,7 @@ function SettingsApp() {
                   <Download size={13} />
                 )}
                 {speechSetup.phase === "error" || speechSetup.phase === "missing"
-                  ? "Speech model needs attention"
+                  ? settings.transcriptionProvider === "local" ? "Speech model needs attention" : "Speech connection needs attention"
                   : `Downloading ${speechSetup.modelId}`}
               </span>
               {speechSetup.phase === "downloading" ? (
@@ -653,6 +654,7 @@ function SettingsApp() {
           <RecoveryBanner />
           {section === "general" ? (
             <FirstRunSetup
+              speechProvider={settings.transcriptionProvider}
               speech={speechSetup}
               showScribeSetup={showScribeSetup}
               onOpenVoice={openVoiceSetup}
