@@ -1487,12 +1487,10 @@ fn show_overlay(app: &AppHandle, mode: Mode, visible: bool) {
             Mode::Scribe => "overlay",
         };
         if let Some(other) = app.get_webview_window(other_label) {
-            let _ = other.hide();
+            let _ = crate::hide_voice_overlay(&other);
         }
         if let Some(overlay) = app.get_webview_window(selected_label) {
-            let _ = overlay.set_ignore_cursor_events(true);
-            crate::position_overlay_bottom_center(&overlay);
-            let _ = overlay.show();
+            let _ = crate::show_voice_overlay(&overlay, false);
         }
     } else {
         hide_overlay(app);
@@ -1502,7 +1500,7 @@ fn show_overlay(app: &AppHandle, mode: Mode, visible: bool) {
 fn hide_overlay(app: &AppHandle) {
     for label in ["overlay", "scribe-overlay"] {
         if let Some(overlay) = app.get_webview_window(label) {
-            let _ = overlay.hide();
+            let _ = crate::hide_voice_overlay(&overlay);
         }
     }
 }

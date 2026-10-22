@@ -112,10 +112,7 @@ pub fn present(app: &AppHandle, request: ReviewRequest) -> Result<()> {
     let window = app
         .get_webview_window("scribe-overlay")
         .ok_or_else(|| anyhow!("Scribe overlay window is unavailable"))?;
-    let _ = window.set_ignore_cursor_events(false);
-    crate::position_overlay_bottom_center(&window);
-    window.show()?;
-    window.set_focus()?;
+    crate::show_voice_overlay(&window, true)?;
     let _ = window.emit("scribe-review://updated", payload);
     Ok(())
 }
@@ -251,7 +248,11 @@ pub fn accept_scribe_review(
     // never traced or measured; only an explicit Add or Dismiss persists it.
     let suggestion = qualify_dictionary_suggestion(&session.draft, trimmed, &session.settings);
 
-    match injection::inject_review_text(&session.target, &insertion) {
+    let release_focus = app
+        .get_webview_window("scribe-overlay")
+        .map(|window| crate::release_voice_overlay_focus(&window))
+        .unwrap_or(Ok(()));
+    match release_focus.and_then(|()| injection::inject_review_text(&session.target, &insertion)) {
         Ok(TargetInjection::Inserted) => {
             // Learn only from a user's edit. Treating an untouched model draft
             // as preference evidence would reinforce the model's own defaults.
@@ -390,8 +391,7 @@ fn restore_session(state: &State<'_, ReviewStore>, session: ReviewSession) {
 
 fn refocus_review(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("scribe-overlay") {
-        let _ = window.show();
-        let _ = window.set_focus();
+        let _ = crate::show_voice_overlay(&window, true);
     }
 }
 

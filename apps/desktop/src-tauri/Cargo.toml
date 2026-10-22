@@ -65,4 +65,5 @@ tauri = { version = "2", features = ["macos-private-api"] }
 keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
 core-foundation = "0.10"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSRunningApplication", "NSWorkspace", "NSWindow"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSRunningApplication", "NSWorkspace", "NSWindow", "NSPanel", "NSView", "NSResponder", "NSScreen", "NSEvent"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry", "NSObject"] }

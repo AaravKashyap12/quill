@@ -297,15 +297,13 @@ fn preview_mode(app: AppHandle, mode: Mode, active: bool) -> Result<(), String> 
         .ok_or_else(|| format!("{selected_label} window is unavailable"))?;
     if active {
         if let Some(other) = app.get_webview_window(other_label) {
-            let _ = other.hide();
+            let _ = hide_voice_overlay(&other);
         }
-        let _ = overlay.set_ignore_cursor_events(true);
-        position_overlay_bottom_center(&overlay);
-        overlay.show().map_err(|error| error.to_string())
+        show_voice_overlay(&overlay, false).map_err(|error| error.to_string())
     } else {
         for label in ["overlay", "scribe-overlay"] {
             if let Some(window) = app.get_webview_window(label) {
-                let _ = window.hide();
+                let _ = hide_voice_overlay(&window);
             }
         }
         Ok(())
@@ -316,13 +314,57 @@ fn preview_mode(app: AppHandle, mode: Mode, active: bool) -> Result<(), String> 
 fn dismiss_voice_overlay(window: tauri::WebviewWindow) {
     // Tauri supplies the caller: an old surface must never hide the active mode.
     if matches!(window.label(), "overlay" | "scribe-overlay") {
-        let _ = window.set_ignore_cursor_events(true);
-        let _ = window.hide();
+        let _ = hide_voice_overlay(&window);
     }
+}
+
+/// Recording never requests keyboard focus; review explicitly opts into it.
+/// On macOS only the native panel is shown. Tauri's backing window stays hidden.
+pub(crate) fn show_voice_overlay(
+    window: &tauri::WebviewWindow,
+    review: bool,
+) -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        macos_overlay::show(window, review)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.set_ignore_cursor_events(!review)?;
+        position_overlay_bottom_center(window);
+        window.show()?;
+        if review {
+            window.set_focus()?;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn hide_voice_overlay(window: &tauri::WebviewWindow) -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        macos_overlay::hide(window)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.set_ignore_cursor_events(true)?;
+        window.hide()?;
+        Ok(())
+    }
+}
+
+pub(crate) fn release_voice_overlay_focus(_window: &tauri::WebviewWindow) -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        macos_overlay::release_focus(_window)
+    }
+    #[cfg(not(target_os = "macos"))]
+    Ok(())
 }
 
 /// Use the monitor's usable desktop so the Dock/taskbar cannot cover the pill.
 /// Resolve the screen on each activation rather than reusing an old position.
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn position_overlay_bottom_center(window: &tauri::WebviewWindow) {
     let monitor = window
         .cursor_position()
@@ -339,6 +381,7 @@ pub(crate) fn position_overlay_bottom_center(window: &tauri::WebviewWindow) {
     let _ = window.set_position(position);
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn overlay_position(
     area: &tauri::PhysicalRect<i32, u32>,
     window: tauri::PhysicalSize<u32>,
@@ -491,6 +534,10 @@ pub fn run() {
                 .build(),
         )
         .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                macos_overlay::remove(window.label());
+            }
             if window.label() != "main" {
                 return;
             }
@@ -514,7 +561,7 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             if let Err(error) = macos_overlay::configure(app) {
-                tracing::warn!(%error, "failed to configure macOS overlay Spaces behavior");
+                tracing::warn!(%error, "failed to create native macOS overlay panels");
             }
 
             // Bring the native frame into the design rather than inheriting a
@@ -638,8 +685,14 @@ pub fn run() {
             ollama::pull_ollama_model,
             ollama::cancel_ollama_pull
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Quill");
+        .build(tauri::generate_context!())
+        .expect("error while building Quill")
+        .run(|_app, _event| {
+            #[cfg(target_os = "macos")]
+            if matches!(_event, tauri::RunEvent::Exit) {
+                macos_overlay::teardown();
+            }
+        });
 }
 
 #[cfg(test)]
