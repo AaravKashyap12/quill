@@ -1,17 +1,17 @@
-import type { AppSettings, RuntimeStatus } from "./types";
+import type { AppSettings, HotkeyConfig, RuntimeStatus } from "./types";
 import { detectPlatform } from "./platform";
 
 const mac = detectPlatform() === "mac";
 
 export const defaultSettings: AppSettings = {
   dictationHotkey: {
-    modifiers: mac ? ["Meta", "Shift"] : ["Ctrl"],
-    key: mac ? "D" : "Space",
+    modifiers: mac ? [] : ["Ctrl"],
+    key: mac ? "AltRight" : "Space",
     behavior: "hold",
   },
   scribeHotkey: {
-    modifiers: mac ? ["Meta", "Shift"] : ["Ctrl", "Shift"],
-    key: mac ? "S" : "Space",
+    modifiers: mac ? [] : ["Ctrl", "Shift"],
+    key: mac ? "MetaRight" : "Space",
     behavior: "hold",
   },
   audioInputDevice: null,
@@ -45,6 +45,8 @@ export const initialRuntimeStatus: RuntimeStatus = {
 export function formatHotkey(settings: AppSettings, mode: "dictation" | "scribe") {
   const hotkey = mode === "dictation" ? settings.dictationHotkey : settings.scribeHotkey;
   const macLabels: Record<string, string> = {
+    AltRight: "Right Option",
+    MetaRight: "Right Command",
     Meta: "⌘",
     Ctrl: "⌃",
     Alt: "⌥",
@@ -53,4 +55,9 @@ export function formatHotkey(settings: AppSettings, mode: "dictation" | "scribe"
   return [...hotkey.modifiers, hotkey.key]
     .map((part) => (detectPlatform() === "mac" ? macLabels[part] ?? part : part))
     .join(" + ");
+}
+
+export function isStandaloneMacHotkey(hotkey: HotkeyConfig): boolean {
+  return detectPlatform() === "mac" && hotkey.modifiers.length === 0
+    && (hotkey.key === "AltRight" || hotkey.key === "MetaRight");
 }

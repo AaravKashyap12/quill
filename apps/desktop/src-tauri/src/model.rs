@@ -4,21 +4,20 @@ use serde::{Deserialize, Serialize};
 pub const MAX_DISMISSED_SUGGESTIONS: usize = 200;
 
 #[cfg(any(target_os = "macos", test))]
-fn has_legacy_windows_hotkeys(settings: &AppSettings) -> bool {
-    settings.dictation_hotkey.modifiers.len() == 1
-        && settings.dictation_hotkey.modifiers[0] == "Ctrl"
-        && settings.dictation_hotkey.key == "Space"
-        && settings.scribe_hotkey.modifiers.len() == 2
-        && settings.scribe_hotkey.modifiers[0] == "Ctrl"
-        && settings.scribe_hotkey.modifiers[1] == "Shift"
-        && settings.scribe_hotkey.key == "Space"
+fn has_legacy_mac_hotkeys(settings: &AppSettings) -> bool {
+    let untouched = |hotkey: &HotkeyConfig, key: &str| {
+        hotkey.modifiers == ["Meta", "Shift"]
+            && hotkey.key == key
+            && hotkey.behavior == HotkeyBehavior::Hold
+    };
+    untouched(&settings.dictation_hotkey, "D") && untouched(&settings.scribe_hotkey, "S")
 }
 
 fn generic_register() -> Register {
     Register::Generic
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct HotkeyConfig {
     pub modifiers: Vec<String>,
@@ -160,13 +159,13 @@ impl Default for AppSettings {
         #[cfg(target_os = "macos")]
         let (dictation_hotkey, scribe_hotkey) = (
             HotkeyConfig {
-                modifiers: vec!["Meta".into(), "Shift".into()],
-                key: "D".into(),
+                modifiers: vec![],
+                key: "AltRight".into(),
                 behavior: HotkeyBehavior::Hold,
             },
             HotkeyConfig {
-                modifiers: vec!["Meta".into(), "Shift".into()],
-                key: "S".into(),
+                modifiers: vec![],
+                key: "MetaRight".into(),
                 behavior: HotkeyBehavior::Hold,
             },
         );
@@ -279,18 +278,14 @@ impl AppSettings {
         unsupported
     }
 
-    /// Migrate only the untouched Windows defaults on macOS. Exact matching
-    /// protects every shortcut the user has deliberately customised.
+    /// Migrate the exact previous Mac default pair; preserve every customized pair.
     pub fn normalize_hotkeys_for_platform(&mut self) -> bool {
         #[cfg(target_os = "macos")]
-        {
-            if has_legacy_windows_hotkeys(self) {
-                self.dictation_hotkey.modifiers = vec!["Meta".into(), "Shift".into()];
-                self.dictation_hotkey.key = "D".into();
-                self.scribe_hotkey.modifiers = vec!["Meta".into(), "Shift".into()];
-                self.scribe_hotkey.key = "S".into();
-                return true;
-            }
+        if has_legacy_mac_hotkeys(self) {
+            let defaults = Self::default();
+            self.dictation_hotkey = defaults.dictation_hotkey;
+            self.scribe_hotkey = defaults.scribe_hotkey;
+            return true;
         }
         false
     }
@@ -466,14 +461,37 @@ mod tests {
     }
 
     #[test]
-    fn legacy_windows_hotkey_detection_never_matches_custom_shortcuts() {
-        let defaults = AppSettings::default();
+    fn only_exact_untouched_mac_pair_matches_migration() {
+        let mut settings = AppSettings {
+            dictation_hotkey: HotkeyConfig {
+                modifiers: vec!["Meta".into(), "Shift".into()],
+                key: "D".into(),
+                behavior: HotkeyBehavior::Hold,
+            },
+            scribe_hotkey: HotkeyConfig {
+                modifiers: vec!["Meta".into(), "Shift".into()],
+                key: "S".into(),
+                behavior: HotkeyBehavior::Hold,
+            },
+            ..AppSettings::default()
+        };
+        assert!(has_legacy_mac_hotkeys(&settings));
+        let mut custom = settings.clone();
+        custom.dictation_hotkey.key = "F".into();
+        assert!(!has_legacy_mac_hotkeys(&custom));
+        let mut custom = settings.clone();
+        custom.scribe_hotkey.behavior = HotkeyBehavior::TapToLock;
+        assert!(!has_legacy_mac_hotkeys(&custom));
+        #[cfg(target_os = "macos")]
+        {
+            assert!(settings.normalize_hotkeys_for_platform());
+            assert_eq!(settings.dictation_hotkey.key, "AltRight");
+            assert_eq!(settings.scribe_hotkey.key, "MetaRight");
+            assert!(!settings.normalize_hotkeys_for_platform());
+            assert!(!custom.normalize_hotkeys_for_platform());
+        }
         #[cfg(not(target_os = "macos"))]
-        assert!(has_legacy_windows_hotkeys(&defaults));
-
-        let mut custom = defaults;
-        custom.dictation_hotkey.key = "D".into();
-        assert!(!has_legacy_windows_hotkeys(&custom));
+        assert!(!settings.normalize_hotkeys_for_platform());
     }
 
     #[test]

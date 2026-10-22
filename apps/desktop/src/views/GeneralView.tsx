@@ -1,3 +1,4 @@
+import { isStandaloneMacHotkey } from "../defaults";
 import { ShieldCheck } from "lucide-react";
 import { ModeShortcut } from "../components/ModeShortcut";
 import { SettingRow } from "../components/SettingRow";
@@ -46,7 +47,9 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
         <div className="settings-group">
           <SettingRow
             label="Dictation activation"
-            description="Hold the shortcut, or tap once to start and again to stop."
+            description={isStandaloneMacHotkey(settings.dictationHotkey)
+              ? "Hold the key alone briefly to start. Release to insert; other keys cancel."
+              : "Hold the shortcut, or tap once to start and again to stop."}
           >
             <div className="activation-toggle" role="group" aria-label="Dictation activation">
               {(["hold", "tap-to-lock"] as const).map((behavior) => (
@@ -55,6 +58,7 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
                   type="button"
                   className={settings.dictationHotkey.behavior === behavior ? "is-active" : ""}
                   aria-pressed={settings.dictationHotkey.behavior === behavior}
+                  disabled={behavior === "tap-to-lock" && isStandaloneMacHotkey(settings.dictationHotkey)}
                   onClick={() =>
                     onHotkey("dictation", { ...settings.dictationHotkey, behavior })
                   }
@@ -66,7 +70,9 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
           </SettingRow>
           <SettingRow
             label="Scribe activation"
-            description="Configure Scribe independently from Dictation."
+            description={isStandaloneMacHotkey(settings.scribeHotkey)
+              ? "Hold the key alone briefly to start. Release to review; other keys cancel."
+              : "Configure Scribe independently from Dictation."}
           >
             <div className="activation-toggle" role="group" aria-label="Scribe activation">
               {(["hold", "tap-to-lock"] as const).map((behavior) => (
@@ -75,6 +81,7 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
                   type="button"
                   className={settings.scribeHotkey.behavior === behavior ? "is-active" : ""}
                   aria-pressed={settings.scribeHotkey.behavior === behavior}
+                  disabled={behavior === "tap-to-lock" && isStandaloneMacHotkey(settings.scribeHotkey)}
                   onClick={() =>
                     onHotkey("scribe", { ...settings.scribeHotkey, behavior })
                   }

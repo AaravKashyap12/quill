@@ -16,8 +16,8 @@ interface ModeShortcutProps {
  * pollers. Command is valid on macOS but remains rejected as the Windows key. */
 type HotkeyResult = { ok: true; hotkey: HotkeyConfig } | { ok: false; reason: string };
 
-function hotkeyFromEvent(
-  event: KeyboardEvent<HTMLButtonElement>,
+export function hotkeyFromEvent(
+  event: Pick<KeyboardEvent<HTMLButtonElement>, "key" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">,
   behavior: HotkeyConfig["behavior"],
 ): HotkeyResult | null {
   // Modifier-only presses aren't a full chord yet — wait for the trigger key.
@@ -62,6 +62,20 @@ function hotkeyFromEvent(
   return { ok: true, hotkey: { modifiers, key, behavior } };
 }
 
+type ModifierEvent = Pick<KeyboardEvent<HTMLButtonElement>, "code" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">;
+
+export function standaloneModifierKey(event: ModifierEvent): string | null {
+  if (!isMac() || event.ctrlKey || event.shiftKey) return null;
+  if (event.code === "AltRight" && !event.metaKey) return "AltRight";
+  if (event.code === "MetaRight" && !event.altKey) return "MetaRight";
+  return null;
+}
+
+export function releasedModifierHotkey(candidate: string | null, event: ModifierEvent): HotkeyConfig | null {
+  if (!candidate || candidate !== standaloneModifierKey(event)) return null;
+  return { modifiers: [], key: candidate, behavior: "hold" };
+}
+
 function describeKey(key: string): string {
   if (/^F\d{1,2}$/.test(key)) return `Function key (${key})`;
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(key)) return "Arrow keys";
@@ -100,6 +114,7 @@ export function ModeShortcut({
     };
   }, [recording]);
 
+  const modifierCandidate = useRef<string | null>(null);
   const previewActive = useRef(false);
   function pushPreview(active: boolean) {
     if (previewActive.current === active) return;
@@ -116,6 +131,8 @@ export function ModeShortcut({
       setRejection(null);
       return;
     }
+    // Wait for release so a right modifier can still begin a custom chord.
+    if (!event.repeat) modifierCandidate.current = standaloneModifierKey(event);
     const current =
       mode === "dictation" ? settings.dictationHotkey : settings.scribeHotkey;
     const next = hotkeyFromEvent(event, current.behavior);
@@ -129,8 +146,21 @@ export function ModeShortcut({
     setRecording(false);
   }
 
+  function recordRelease(event: KeyboardEvent<HTMLButtonElement>) {
+    if (!recording) return;
+    const next = releasedModifierHotkey(modifierCandidate.current, event);
+    modifierCandidate.current = null;
+    if (!next) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onChange(next);
+    setRejection(null);
+    setRecording(false);
+  }
+
   // Clear the rejection message when the user starts a fresh recording.
   useEffect(() => {
+    modifierCandidate.current = null;
     if (recording) setRejection(null);
   }, [recording]);
 
@@ -148,13 +178,14 @@ export function ModeShortcut({
         type="button"
         onClick={() => setRecording((state) => !state)}
         onKeyDown={record}
+        onKeyUp={recordRelease}
         onBlur={() => setRecording(false)}
         aria-label={`Change ${title} hotkey — currently ${hotkeyLabel}`}
         title={rejection ?? undefined}
       >
         {recording ? (
           <span className="hotkey-recorder__prompt">
-            {rejection ?? "Press a shortcut…"}
+            {rejection ?? (isMac() ? "Press a shortcut or release a right modifier…" : "Press a shortcut…")}
           </span>
         ) : (
           <span className="hotkey-recorder__chord">
