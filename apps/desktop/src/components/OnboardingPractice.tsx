@@ -1,4 +1,5 @@
 import type { HotkeyConfig, RuntimeStatus } from "../types";
+import { MacAccessibilityNotice } from "./MacAccessibilityNotice";
 
 export function OnboardingPractice({ hotkey, runtime }: {
   hotkey: HotkeyConfig;
@@ -6,6 +7,7 @@ export function OnboardingPractice({ hotkey, runtime }: {
 }) {
   return (
     <div className="onboarding-practice">
+      <MacAccessibilityNotice />
       <label htmlFor="onboarding-practice">
         Try it here <span>Optional</span>
       </label>

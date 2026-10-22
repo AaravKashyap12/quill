@@ -70,6 +70,10 @@ extern "C" {
     ) -> AXError;
 }
 
+pub fn accessibility_permission_granted() -> bool {
+    unsafe { AXIsProcessTrusted() != 0 }
+}
+
 pub fn request_accessibility_permission() -> bool {
     let prompt_key = unsafe { CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt) };
     let options: CFDictionary<CFString, CFBoolean> =

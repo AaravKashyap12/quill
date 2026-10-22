@@ -123,6 +123,11 @@ pub fn selected_text_matches(target: &InsertionTarget, expected: &str) -> Result
 }
 
 #[cfg(target_os = "macos")]
+pub fn accessibility_permission_granted() -> bool {
+    macos::accessibility_permission_granted()
+}
+
+#[cfg(target_os = "macos")]
 pub fn request_accessibility_permission() -> bool {
     macos::request_accessibility_permission()
 }

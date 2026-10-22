@@ -87,6 +87,33 @@ fn acquire_single_instance() -> Option<SingleInstanceGuard> {
 }
 
 #[tauri::command]
+fn get_macos_accessibility_status() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        injection::accessibility_permission_granted()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+#[tauri::command]
+fn request_macos_accessibility(window: tauri::WebviewWindow) -> Result<bool, String> {
+    if window.label() != "main" {
+        return Err("Open Quill settings to enable text insertion.".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Ok(injection::request_accessibility_permission())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(true)
+    }
+}
+
+#[tauri::command]
 fn get_settings(state: State<'_, QuillState>) -> AppSettings {
     state
         .settings
@@ -582,9 +609,8 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             {
-                // Ask once at startup so a tester sees the system permission
-                // prompt before a dictation can silently fail to paste.
-                let accessibility = injection::request_accessibility_permission();
+                // Startup checks never prompt. Settings offers an explicit action.
+                let accessibility = injection::accessibility_permission_granted();
                 tracing::info!(accessibility, "macOS insertion permission status");
             }
 
@@ -654,6 +680,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            get_macos_accessibility_status,
+            request_macos_accessibility,
             save_settings,
             app_updates::check_app_update,
             app_updates::install_app_update,

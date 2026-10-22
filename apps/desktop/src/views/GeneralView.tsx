@@ -3,6 +3,7 @@ import { isMac } from "../platform";
 import { Globe, ShieldCheck } from "lucide-react";
 import { MacShortcutPreset, ModeShortcut } from "../components/ModeShortcut";
 import { SettingRow } from "../components/SettingRow";
+import { MacAccessibilityNotice } from "../components/MacAccessibilityNotice";
 import { Switch } from "../components/Switch";
 import type { AppSettings, HotkeyConfig, Mode } from "../types";
 
@@ -19,6 +20,8 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
       <header className="view-heading">
         <h1>Two shortcuts. Always ready.</h1>
       </header>
+
+      <MacAccessibilityNotice />
 
       <section aria-labelledby="hotkeys-title">
         <div className="section-heading">

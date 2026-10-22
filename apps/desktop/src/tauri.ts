@@ -106,6 +106,16 @@ export async function getProviderKeyStatus(provider: CloudProvider, requestAcces
   }
 }
 
+export async function getMacosAccessibilityStatus(): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("get_macos_accessibility_status");
+}
+
+export async function requestMacosAccessibility(): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("request_macos_accessibility");
+}
+
 export async function setProviderKey(provider: CloudProvider, key: string): Promise<ProviderKeyStatus> {
   if (!isTauri()) {
     if (!key.trim()) throw new Error("Enter an API key before saving.");
