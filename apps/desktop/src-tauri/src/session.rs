@@ -372,14 +372,16 @@ async fn run(
                 session.finish(&runtime, &app).await?;
                 carried_target = Some(session.target.clone());
                 if let Some(deferred) = session.take_deferred_insertion() {
+                    if deferred.retry.last_error.is_none() {
+                        emit_status(
+                            &app,
+                            "ready",
+                            None,
+                            "Text queued — return to the original editor to insert",
+                            None,
+                        );
+                    }
                     deferred_insertions.push(deferred);
-                    emit_status(
-                        &app,
-                        "ready",
-                        None,
-                        "Text queued — return to the original editor to insert",
-                        None,
-                    );
                 }
             }
             if let Some(mode) = desired_mode {
@@ -466,6 +468,7 @@ struct ActiveSession {
     transcript: String,
     pending_insertion: String,
     pending_notice_sent: bool,
+    insertion_retry: InsertionRetry,
     review_opened: bool,
     /// When the last audio-recovery WAV was written. Throttles the write so
     /// long recordings don't rewrite an ever-growing buffer every ASR pass.
@@ -563,6 +566,7 @@ impl ActiveSession {
             transcript: String::new(),
             pending_insertion: String::new(),
             pending_notice_sent: false,
+            insertion_retry: InsertionRetry::default(),
             review_opened: false,
             last_audio_checkpoint: None,
         })
@@ -844,6 +848,13 @@ impl ActiveSession {
                 "Review your Scribe draft",
                 None,
             );
+        } else if !self.pending_insertion.is_empty() {
+            emit_voice_pill(app, "error", Some(self.mode), Some("Text is queued"), None);
+            let message =
+                self.insertion_retry.last_error.as_deref().unwrap_or(
+                    "Return to the original text field to insert the queued transcript.",
+                );
+            emit_status(app, "error", Some(self.mode), message, None);
         } else {
             if self.transcript.trim().is_empty() {
                 emit_voice_pill(
@@ -1021,6 +1032,7 @@ impl ActiveSession {
         match outcome {
             Ok(injection::TargetInjection::Inserted) => {
                 self.pending_notice_sent = false;
+                self.insertion_retry = InsertionRetry::default();
             }
             Ok(injection::TargetInjection::Queued) => {
                 self.pending_insertion = batch;
@@ -1040,11 +1052,13 @@ impl ActiveSession {
             }
             Err(error) => {
                 self.pending_insertion = batch;
-                tracing::error!(%error, "could not deliver text to the pinned editor");
-                self.emit_pending_status(
-                    app,
-                    "Text queued — Quill could not safely reach the original editor",
-                );
+                if self
+                    .insertion_retry
+                    .failed(error.to_string(), Instant::now())
+                {
+                    tracing::error!(%error, "could not deliver text to the pinned editor");
+                    emit_status(app, "error", Some(self.mode), &error.to_string(), None);
+                }
                 return Ok(());
             }
         }
@@ -1071,7 +1085,7 @@ impl ActiveSession {
     }
 
     fn flush_pending_if_target_is_foreground(&mut self, app: &AppHandle) -> Result<()> {
-        if self.pending_insertion.is_empty() {
+        if self.pending_insertion.is_empty() || !self.insertion_retry.ready(Instant::now()) {
             return Ok(());
         }
         if !injection::target_is_available(&self.target) {
@@ -1089,6 +1103,7 @@ impl ActiveSession {
         match injection::inject_text_to_target(&self.target, &batch) {
             Ok(injection::TargetInjection::Inserted) => {
                 self.pending_notice_sent = false;
+                self.insertion_retry = InsertionRetry::default();
                 tracing::info!("queued text inserted after the original editor regained focus");
             }
             Ok(injection::TargetInjection::Queued) => {
@@ -1103,11 +1118,13 @@ impl ActiveSession {
             }
             Err(error) => {
                 self.pending_insertion = batch;
-                tracing::error!(%error, "could not flush text queued for the original editor");
-                self.emit_pending_status(
-                    app,
-                    "Text remains queued — Quill could not safely reach the original editor",
-                );
+                if self
+                    .insertion_retry
+                    .failed(error.to_string(), Instant::now())
+                {
+                    tracing::error!(%error, "could not flush text queued for the original editor");
+                    emit_status(app, "error", Some(self.mode), &error.to_string(), None);
+                }
             }
         }
         Ok(())
@@ -1129,6 +1146,7 @@ impl ActiveSession {
             target: self.target.clone(),
             text: std::mem::take(&mut self.pending_insertion),
             unavailable_notice_sent: false,
+            retry: std::mem::take(&mut self.insertion_retry),
         })
     }
 }
@@ -1151,6 +1169,29 @@ struct DeferredInsertion {
     target: injection::InsertionTarget,
     text: String,
     unavailable_notice_sent: bool,
+    retry: InsertionRetry,
+}
+
+#[derive(Default)]
+struct InsertionRetry {
+    last_error: Option<String>,
+    retry_after: Option<Instant>,
+}
+
+impl InsertionRetry {
+    fn ready(&self, now: Instant) -> bool {
+        self.retry_after.map_or(true, |deadline| now >= deadline)
+    }
+
+    /// Keep retrying after permission/focus recovery without flooding logs or IPC.
+    fn failed(&mut self, error: String, now: Instant) -> bool {
+        self.retry_after = Some(now + Duration::from_millis(500));
+        if self.last_error.as_ref() == Some(&error) {
+            return false;
+        }
+        self.last_error = Some(error);
+        true
+    }
 }
 
 fn flush_deferred_insertions(
@@ -1159,6 +1200,10 @@ fn flush_deferred_insertions(
 ) -> Result<()> {
     let mut remaining = Vec::with_capacity(deferred_insertions.len());
     for mut deferred in std::mem::take(deferred_insertions) {
+        if !deferred.retry.ready(Instant::now()) {
+            remaining.push(deferred);
+            continue;
+        }
         if !injection::target_is_available(&deferred.target) {
             if !deferred.unavailable_notice_sent {
                 emit_status(
@@ -1210,7 +1255,10 @@ fn flush_deferred_insertions(
                 remaining.push(deferred);
             }
             Err(error) => {
-                tracing::error!(%error, "could not flush text queued for the original editor");
+                if deferred.retry.failed(error.to_string(), Instant::now()) {
+                    tracing::error!(%error, "could not flush text queued for the original editor");
+                    emit_status(app, "error", None, &error.to_string(), None);
+                }
                 remaining.push(deferred);
             }
         }
@@ -1445,6 +1493,25 @@ fn hide_overlay(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_insertion_retries_are_bounded_and_only_changed_errors_are_reported() {
+        let now = Instant::now();
+        let mut retry = InsertionRetry::default();
+        assert!(retry.ready(now));
+        assert!(retry.failed("Accessibility permission required".into(), now));
+        assert!(!retry.ready(now + Duration::from_millis(12)));
+        assert!(!retry.ready(now + Duration::from_millis(499)));
+        assert!(retry.ready(now + Duration::from_millis(500)));
+        assert!(!retry.failed(
+            "Accessibility permission required".into(),
+            now + Duration::from_millis(500),
+        ));
+        assert!(retry.failed(
+            "Original editor closed".into(),
+            now + Duration::from_secs(1)
+        ));
+    }
 
     #[test]
     fn updater_refuses_to_interrupt_an_active_session() {

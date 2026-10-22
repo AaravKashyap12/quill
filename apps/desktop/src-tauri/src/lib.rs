@@ -518,7 +518,8 @@ pub fn run() {
             {
                 // Ask once at startup so a tester sees the system permission
                 // prompt before a dictation can silently fail to paste.
-                let _ = injection::request_accessibility_permission();
+                let accessibility = injection::request_accessibility_permission();
+                tracing::info!(accessibility, "macOS insertion permission status");
             }
 
             #[cfg(any(windows, target_os = "macos"))]
