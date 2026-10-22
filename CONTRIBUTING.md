@@ -6,8 +6,9 @@ Thanks for helping build local-first dictation.
 
 - Preserve the distinction between raw Dictation and resolved Scribe behavior.
 - Do not add cloud telemetry, account requirements, or silent network calls.
-- Cleanup must never add meaning. New cleanup behavior requires provenance and
-  correction tests.
+- Cleanup must preserve specific facts. New cleanup behavior requires
+  correction, action-specific guard, and review-before-insertion tests. The
+  strict lexical-provenance gate belongs to the historical prototype.
 - Windows global shortcuts must remain poll-based; do not add a system-wide
   keyboard hook.
 - Platform-specific code belongs behind a small Rust module boundary.
@@ -15,7 +16,7 @@ Thanks for helping build local-first dictation.
 ## Before opening a pull request
 
 ```powershell
-python prototypes/test_scribe_buffer.py
+pnpm test
 pnpm typecheck
 pnpm build
 ```
@@ -29,9 +30,10 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-UI changes should include desktop and mobile screenshots and must work by
-keyboard. Never check models, recordings, signing material, or generated
-installers into Git.
+UI changes should include desktop-window and compact-layout evidence and must
+work by keyboard. A build is not proof of native hotkeys, microphone access,
+window transparency, or insertion; record the platform and actual user path.
+Never check models, recordings, signing material, or generated installers into Git.
 
 ## Local macOS bundle
 

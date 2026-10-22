@@ -1,44 +1,56 @@
 # Quill roadmap
 
 Quill is an independent open-source project and is not affiliated with any
-commercial dictation product.
+commercial dictation product. This roadmap distinguishes implemented source
+from platform verification; a checked item is not a claim that macOS works.
 
-## 0.1 — Windows end-to-end preview
+## Implemented in the engineering preview
 
-- [x] Validate LocalAgreement and trailing-buffer contracts against canned text.
-- [x] Build Tauri v2 settings shell, tray configuration, and recording overlay.
-- [x] Add poll-only Windows hotkey state using `GetAsyncKeyState`.
-- [x] Add Win32 `SendInput` and clipboard insertion primitives.
-- [x] Detect Ollama and common OpenAI-compatible localhost endpoints.
-- [x] Reject cleanup responses containing unspoken lexical content.
-- [ ] Bundle a pinned whisper.cpp `whisper-stream` build and record the upstream commit.
-- [ ] Connect microphone lifecycle, rolling ASR passes, word commit, and injection in one session controller.
-- [ ] Add hotkey-conflict detection and first-run shortcut validation.
-- [ ] Ship an unsigned Windows engineering-preview installer.
+- [x] Historical LocalAgreement and trailing-buffer prototype with canned tests.
+- [x] Tauri v2 settings shell, tray, recording/processing overlays, and onboarding.
+- [x] Poll-only global hotkeys and clipboard insertion on Windows and macOS.
+- [x] Microphone lifecycle, rolling local ASR, and final insertion after release.
+- [x] Pinned whisper.cpp `whisper-server`: bundled Windows CPU runtime, optional CUDA pack, universal macOS Metal sidecar.
+- [x] Explicit local/Groq/Gemini speech selection and OS credential-store keys.
+- [x] Local and Gemini cleanup, action-specific safety guards, and Scribe review before insertion.
+- [x] On-device speech-model browser and pinned SHA-256 download/startup verification.
+- [x] Recognition-bias dictionary, exact replacements, and spoken snippets.
+- [x] Recovery UI for the last audio/transcript checkpoint.
+- [x] Optional bounded editor context and aggregate per-app writing preferences.
+- [x] User-confirmed updater flow and release artifact configuration.
 
-## 0.2 — macOS verification
+The production cleanup path uses prompts, fallback guards, and user review.
+The strict lexical-provenance gate remains a historical prototype contract.
 
-- [x] Add CoreGraphics poll/injection source.
-- [ ] Verify hotkey behavior on Apple Silicon.
-- [ ] Complete microphone and Accessibility permission onboarding.
-- [ ] Verify whisper.cpp Metal acceleration and CPU fallback.
-- [ ] Test clipboard restoration across common target applications.
-- [ ] Produce a signed/notarized `.dmg` candidate for external testing.
+## Current gate: macOS end-to-end verification
 
-## 0.3 — Daily-driver hardening
+The initial hardware failures prompted repairs to window initialization,
+transparency, credential access, physical modifiers, and target insertion.
+The user has confirmed cloud Dictation, Scribe, Fn shortcuts and full-screen
+overlay visibility on Apple Silicon. The broader acceptance matrix remains open; published
+macOS builds remain unsupported. See [the verification record](docs/macos-verification.md).
 
-- [ ] On-device model browser, verified downloads, and disk-space warnings.
-- [ ] Personal recognition bias dictionary.
-- [ ] Exact replacements and spoken snippets.
-- [ ] Local-only word count and time-saved estimates.
-- [ ] Crash recovery UI for the last audio/transcript checkpoint.
-- [ ] Multi-monitor overlay placement and full keyboard navigation.
-- [ ] Automatic update prompts backed by signed GitHub Release artifacts.
+- [ ] Complete onboarding with local speech and separately with a cloud key.
+- [ ] Verify first and repeated Dictation/Scribe activations on Apple Silicon.
+- [ ] Verify microphone and Accessibility denial, recovery, and restart behavior.
+- [ ] Verify compact transparent overlays and dismissal after success/failure.
+- [ ] Verify whisper.cpp Metal acceleration and CPU fallback on hardware.
+- [ ] Verify single insertion, target focus, and clipboard restoration in TextEdit, browser fields, chat, and terminals.
+- [ ] Record Intel results separately from Apple Silicon results.
+- [ ] Produce and verify a Developer ID signed/notarized `.dmg` for external testing.
+
+## Daily-driver hardening
+
+- [ ] Complete the Windows Notepad, VS Code, and Discord application matrix.
+- [ ] Validate hotkey conflicts and assistive-technology compatibility.
+- [ ] Add disk-space warnings before large model/runtime downloads.
+- [ ] Verify multi-monitor overlay placement and full keyboard navigation.
+- [ ] Verify signed update installation and recovery on each supported platform.
+- [ ] Add local-only word count and time-saved estimates.
 
 ## Later
 
-- Additional languages and per-language cleanup prompts.
+- Additional language-specific cleanup evaluation.
 - User-controlled Voice Activity Detection.
-- Per-application formatting profiles.
 - Portable Windows build.
 - Signed Linux packages after the Windows/macOS experience is stable.

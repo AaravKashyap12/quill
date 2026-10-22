@@ -71,7 +71,7 @@ Identity palette (from the Quill brand board). Exact brand hexes are preserved; 
 
 ## Components
 
-- `RecordingOverlay`: compact bottom-centre pill — mode badge, live waveform, mode name + hotkey/lock hint. Small and gone on key release.
+- `RecordingOverlay`: compact bottom-centre pill — mode badge, live waveform, mode name + hotkey/lock hint. Stays visible through transcription/processing, then hides on completion or dismissal.
 - `ModeShortcut` / `SettingRow`: unchanged desktop primitives.
 - `DownloadPicker`: platform-aware split button, emerald.
 - `Comparison`: one honest table vs Wispr Flow and Willow Voice — the local-first trade-off, not a scorecard.

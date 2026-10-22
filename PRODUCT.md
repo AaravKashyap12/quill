@@ -6,7 +6,9 @@ product
 
 ## Platform
 
-web
+Tauri desktop app for Windows; macOS is an unsupported engineering preview
+with repaired source builds undergoing hardware verification. The marketing
+site is a separate web surface.
 
 ## Users
 

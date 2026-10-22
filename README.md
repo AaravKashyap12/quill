@@ -2,16 +2,18 @@
 
 **Two hotkeys. Two kinds of voice input. Local by default, cloud only when you choose it.**
 
-Quill is a free, open-source voice dictation app for Windows. macOS platform
-hooks and build scaffolding are included, but speech recognition is still wired
-to the packaged Windows runtime, so macOS is not yet functional end to end; see
-the [macOS tester brief](docs/macos-testing.md). Quill keeps two independently
+Quill is a free, open-source voice dictation app for Windows. macOS has native
+platform hooks and a packaged whisper.cpp Metal sidecar. Unreleased repairs
+have passed physical Dictation, Scribe, and full-screen overlay checks on Apple
+Silicon; the broader application matrix remains under verification. Published
+macOS builds remain unsupported; see the [verification record](docs/macos-verification.md)
+and [tester brief](docs/macos-testing.md). Quill keeps two independently
 configurable global shortcuts active at the same time:
 
 | Hotkey | Behavior |
 | --- | --- |
 | **Dictation** | Inserts the completed transcript when you stop, exactly as spoken. No cleanup. |
-| **Scribe** | Holds a short trailing window, resolves spoken self-corrections, removes filler, applies punctuation, and types only the final wording. |
+| **Scribe** | Processes the completed utterance, resolves spoken self-corrections, removes filler, and opens a draft for review before insertion. |
 
 The hotkey is the mode switch. There is no settings menu to open while you are
 working.
@@ -23,8 +25,8 @@ working.
 
 Quill is currently an **engineering preview**:
 
-- The trailing-buffer and final-insertion contracts are implemented and covered
-  by standalone tests.
+- Final insertion is implemented in the desktop session loop. The historical
+  trailing-buffer prototype has separate standalone tests.
 - The Tauri v2 shell, tray/updater/autostart configuration, settings UI,
   floating overlay, local-provider detection, hotkey polling, text injection,
   recovery checkpoints, bundled CPU whisper.cpp server, optional CUDA runtime,
@@ -37,10 +39,11 @@ Quill is currently an **engineering preview**:
 - The desktop React bundle builds successfully.
 - A native Windows production binary has been compiled and manually exercised
   with CUDA. The complete Notepad, VS Code, and Discord
-  application matrix and macOS verification are still pending.
+  application matrix is still pending. Apple Silicon testing confirms cloud
+  Dictation insertion and working Scribe in the repaired source build; this
+  does not establish Intel or release-installer support.
 
-This status is intentionally explicit: do not treat `v0.1.0` source as a
-finished signed release yet.
+This engineering preview is not a verified release on every platform.
 
 ## How the two modes differ
 
@@ -79,12 +82,12 @@ Cleanup output is never injected silently. Every Scribe activation opens a
 review window with the raw transcript and the cleaned draft side by side;
 text reaches the cursor only after you explicitly accept it (or edit it and
 accept). Discard is always one click away. This human-in-the-loop step is
-what closes the gap left by removing the earlier strict word-provenance
+the primary safeguard after removing the earlier strict word-provenance
 gate, which had blocked legitimate rewrites like `hei` → `Hey`. A
 lightweight sanity guard also swaps the LLM output for a safe local draft when
 the prompt would exceed its reserved context budget, the provider returns a
 missing or malformed text field, generation stops at the output-token limit,
-the model returns nothing or balloons past 3× the input word count, or the draft
+the model returns nothing or exceeds its action-specific word budget, or the draft
 introduces new promise, availability, proposal, or follow-up language that was
 absent from the transcript.
 
@@ -93,9 +96,9 @@ absent from the transcript.
 ### At runtime
 
 - Windows 10/11 x64
-- macOS 12+ is the intended target. Hotkeys, insertion, and build scaffolding
-  are implemented, but the ASR runtime packaging is incomplete and the app has
-  never been verified on Mac hardware. Do not treat macOS as supported yet; see
+- macOS 12+ is the intended target. Native hotkeys, insertion, and universal
+  Metal sidecar packaging are implemented. The repaired Apple Silicon source
+  build is being verified on hardware. Published macOS builds remain unsupported; see
   [docs/macos-testing.md](docs/macos-testing.md).
 - A microphone
 - About 75 MB–1.6 GB for a whisper.cpp model
@@ -129,8 +132,9 @@ dedicated VRAM.
 | `distil-large-v3` | 1.5 GB | 5 GB VRAM | 8 GB free RAM | Fast, high-accuracy English long-form transcription |
 | `large-v3-turbo` | 1.6 GB | 6 GB VRAM | 10 GB free RAM | Best quality/speed tradeoff |
 
-Quill disables a model in the selector when its verified model file is not
-installed, preventing an unavailable choice from breaking speech-engine startup.
+Quill disables models whose files are absent from the selector. File presence
+alone does not prove integrity: the speech engine checks the pinned size and
+SHA-256 before loading an installed model and refuses invalid files.
 English shows English-only models; Auto-detect and other languages show only
 compatible multilingual models.
 
@@ -141,7 +145,6 @@ compatible multilingual models.
 - Rust stable (`rustup`, `cargo`, and platform Tauri prerequisites)
 - CMake 3.20+
 - Git
-- SDL2 development files for `whisper-stream`
 - Windows: Visual Studio Build Tools 2022 and WebView2
 - macOS: Xcode Command Line Tools
 
@@ -171,14 +174,14 @@ scripts/
 
 | Layer | Choice | Why |
 | --- | --- | --- |
-| Desktop shell | Tauri v2 + React + TypeScript | One UI and command surface; Windows is verified and macOS remains incomplete |
-| Recognition | whisper.cpp | CPU runtime bundled on Windows; CUDA is an optional verified download; macOS Metal packaging is not yet wired into the app runtime |
+| Desktop shell | Tauri v2 + React + TypeScript | Shared settings and command surface with native platform windows |
+| Recognition | whisper.cpp | Bundled Windows CPU runtime and macOS Metal sidecar; optional verified Windows CUDA download |
 | Text commit | Final clipboard paste | The target editor changes only after the user stops speaking |
 | Speech recognition | Local whisper.cpp, Groq, or Gemini 3.5 Transcribe | Every provider inserts after release |
 | Scribe cleanup | Ollama, OpenAI-compatible localhost, Gemini, or disabled | Every draft still passes the same guards and review window |
 | Windows hotkeys | `GetAsyncKeyState` polling | No system-wide keyboard hook |
 | Windows insertion | Clipboard paste | Reliable Unicode insertion after transcription completes |
-| macOS hotkeys | `CGEventSourceKeyState` polling | Global state without an event tap keyboard hook |
+| macOS hotkeys | CoreGraphics key-state and modifier-flag polling | Global state without an event tap keyboard hook |
 | macOS insertion | CoreGraphics events + clipboard | Works through the standard Accessibility permission path |
 | Updates | Tauri updater + GitHub Releases | User-confirmed updates from signed release artifacts |
 
@@ -190,11 +193,10 @@ Install JavaScript dependencies:
 pnpm install
 ```
 
-Run the standalone cleanup contract:
+Run the historical prototype contracts and frontend regression tests:
 
 ```powershell
-python prototypes/test_scribe_buffer.py
-python prototypes/scribe_buffer.py
+pnpm test
 ```
 
 Run the desktop UI in a browser:
@@ -212,7 +214,9 @@ pnpm build
 ## Building whisper.cpp
 
 The helper scripts clone the upstream project into ignored `third_party/` and
-copy the resulting `whisper-stream` binary into Tauri's sidecar directory.
+build the pinned `whisper-server` runtime. Windows packages CPU runtime
+resources and a separate CUDA archive; macOS copies the universal Metal server
+into Tauri's sidecar directory.
 
 Windows (bundled CPU runtime plus a separately packaged optional CUDA runtime):
 
@@ -226,11 +230,14 @@ macOS with Metal:
 ./scripts/build-whisper.sh metal
 ```
 
-Speech models are not bundled with the installer. On first launch Quill selects
-and downloads the compatible `medium` model automatically, with progress shown
-in the setup sheet and sidebar. Models can still be changed or removed from
-**Voice → Compare and download models**. Quill stores them in the platform
-application-data `models/` folder and verifies each SHA-256 digest before use.
+Speech models are not bundled with the installer. During onboarding, choose
+local speech and start a model download, or explicitly connect and select a
+cloud speech provider. Models can be changed or removed from **Voice → Compare
+and download models**. Quill stores local speech models in the platform
+application-data `models/` folder. Every registry model has a pinned upstream
+revision, size, and SHA-256: downloads are checked before installation and
+installed files are checked before the speech engine starts. See
+[model verification](docs/model-verification.md) for provenance and limits.
 NVIDIA users can likewise download the optional CUDA runtime from **Voice →
 Compute backend**. Quill verifies the archive before installation, and selecting
 CUDA without the pack keeps transcription available on CPU with a visible status.
@@ -243,10 +250,14 @@ After installing the Tauri prerequisites and building the whisper sidecar:
 pnpm tauri:build
 ```
 
+For a local ad-hoc-signed macOS build without updater signing keys, use the
+[development bundle command](CONTRIBUTING.md#local-macos-bundle).
+
 Tauri's Windows NSIS configuration uses `currentUser`, so the installer does
-not require administrator rights. A macOS `.app`/`.dmg` target is configured,
-but its ASR resource layout is incomplete and it has not been verified on Mac
-hardware.
+not require administrator rights. The release workflow builds a universal
+macOS `.app`/`.dmg` with the Metal sidecar. Packaging and compilation do not
+establish support. Consult the hardware verification record before treating
+a macOS artifact as supported.
 
 ## macOS permissions
 
@@ -279,7 +290,8 @@ Quill contains no telemetry or analytics client. Local usage statistics, when
 implemented, will be stored only on the device. Network requests are limited to:
 
 - localhost cleanup-provider discovery and inference;
-- user-triggered model downloads;
+- user-triggered speech/cleanup model and optional runtime downloads;
+- explicitly selected Groq or Gemini processing and connection tests;
 - GitHub Releases update checks.
 
 ## Contributing
