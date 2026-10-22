@@ -47,10 +47,14 @@ if [[ ! -x "$built_server" ]]; then
   echo "whisper-server was not produced as an executable at $built_server" >&2
   exit 1
 fi
-if ! lipo "$built_server" -verify_arch arm64 x86_64; then
-  echo "whisper-server is not a universal arm64+x86_64 binary: $built_server" >&2
-  exit 1
-fi
+# Check one architecture at a time: newer Xcode lipo versions parse the
+# second architecture as another input when both are passed together.
+for architecture in arm64 x86_64; do
+  if ! lipo "$built_server" -verify_arch "$architecture"; then
+    echo "whisper-server is missing $architecture: $built_server" >&2
+    exit 1
+  fi
+done
 
 mkdir -p "$destination"
 cp "$built_server" "$sidecar"
