@@ -82,7 +82,7 @@ function targetFor(
       opacity: [0.94, 0.62, 0.27],
     };
   }
-  if (phase === "transcribing" || phase === "processing") {
+  if (phase === "starting" || phase === "transcribing" || phase === "processing") {
     if (index === PRIMITIVE_COUNT - 1) {
       return {
         ...base,

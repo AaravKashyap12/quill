@@ -185,19 +185,9 @@ pub fn spawn(
                     let status_message = if waiting_for_model {
                         "Waiting for the speech model download".to_owned()
                     } else {
-                        format!("Restarting local speech engine: {error}")
+                        format!("Speech input unavailable: {error}")
                     };
-                    emit_status(
-                        &app,
-                        if waiting_for_model {
-                            "error"
-                        } else {
-                            "processing"
-                        },
-                        None,
-                        &status_message,
-                        None,
-                    );
+                    emit_status(&app, "error", None, &status_message, None);
                     std::thread::sleep(Duration::from_secs(if waiting_for_model { 2 } else { 1 }));
                 }
             }
@@ -514,7 +504,24 @@ impl ActiveSession {
                 false,
             )
         };
+        let behavior = match mode {
+            Mode::Dictation => &settings.dictation_hotkey.behavior,
+            Mode::Scribe => &settings.scribe_hotkey.behavior,
+        };
+        let opening_message = if *behavior == HotkeyBehavior::Hold {
+            "Opening microphone — keep holding"
+        } else {
+            "Opening microphone — wait to speak"
+        };
+        show_overlay(app, mode, true);
+        emit_voice_pill(app, "starting", Some(mode), Some(opening_message), None);
+        emit_status(app, "processing", Some(mode), opening_message, None);
+        let audio_open_started = Instant::now();
         let audio = AudioCapture::start(settings.audio_input_device.as_deref())?;
+        tracing::info!(
+            elapsed_ms = audio_open_started.elapsed().as_millis(),
+            "microphone opened for session"
+        );
         let meter_running = Arc::new(AtomicBool::new(true));
         let meter_task_running = Arc::clone(&meter_running);
         let meter_levels = audio.visual_levels_handle();
@@ -873,7 +880,17 @@ impl ActiveSession {
                     Some(&self.transcript),
                 );
             }
-            emit_status(app, "ready", None, "Ready", None);
+            if self.transcript.trim().is_empty() {
+                emit_status(
+                    app,
+                    "error",
+                    Some(self.mode),
+                    "No speech captured. Wait until Quill is listening, then speak before releasing or stopping the shortcut.",
+                    None,
+                );
+            } else {
+                emit_status(app, "ready", None, "Ready", None);
+            }
         }
         Ok(())
     }

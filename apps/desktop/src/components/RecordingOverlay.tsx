@@ -11,6 +11,7 @@ import { VoiceMorph } from "./VoiceMorph";
 
 export type VoicePillPhase =
   | "idle"
+  | "starting"
   | "recording"
   | "stopping"
   | "transcribing"
@@ -40,6 +41,7 @@ interface RecordingOverlayProps {
 }
 
 const PROCESSING_PHASES: VoicePillPhase[] = [
+  "starting",
   "transcribing",
   "processing",
   "refining",
@@ -47,6 +49,7 @@ const PROCESSING_PHASES: VoicePillPhase[] = [
 ];
 
 function phaseLabel(phase: VoicePillPhase, mode: Mode, message?: string | null) {
+  if (phase === "starting") return message || "Opening microphone";
   if (phase === "recording") return `${mode === "dictation" ? "Dictation" : "Scribe"} is listening`;
   if (phase === "stopping") return "Recording stopped";
   if (phase === "transcribing") return "Transcribing speech";
@@ -116,10 +119,10 @@ export function RecordingOverlay({
       setMessage(event.message ?? null);
       if (event.preview) setPreview(event.preview);
 
-      if (event.state === "recording") {
+      if (event.state === "starting" || event.state === "recording") {
         clearTimers();
         setPreview(null);
-        setPhase("recording");
+        setPhase(event.state);
         return;
       }
 
