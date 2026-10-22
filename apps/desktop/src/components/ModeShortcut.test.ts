@@ -13,8 +13,8 @@ describe("Mac right modifier shortcut recording", () => {
     const candidate = standaloneModifierKey(event);
     const hotkey = releasedModifierHotkey(candidate, { ...event, altKey: false });
     expect(hotkey).toEqual({ modifiers: [], key: "AltRight", behavior: "hold" });
-    expect(formatHotkey({ ...defaultSettings, dictationHotkey: hotkey! }, "dictation")).toBe("Right Option");
-    expect(formatHotkey({ ...defaultSettings, scribeHotkey: { modifiers: [], key: "MetaRight", behavior: "hold" } }, "scribe")).toBe("Right Command");
+    expect(formatHotkey({ ...defaultSettings, dictationHotkey: hotkey! }, "dictation")).toBe("Right Option ⌥");
+    expect(formatHotkey({ ...defaultSettings, scribeHotkey: { modifiers: [], key: "MetaRight", behavior: "hold" } }, "scribe")).toBe("Right Command ⌘");
   });
 
   it("preserves right-modifier chords and refuses other modifiers as standalone", () => {
