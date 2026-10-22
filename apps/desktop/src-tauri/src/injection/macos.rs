@@ -3,7 +3,6 @@ use anyhow::{anyhow, Result};
 use core_foundation::base::TCFType;
 use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
-use core_foundation::runloop::CFRunLoop;
 use core_foundation::string::{CFString, CFStringRef};
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWorkspace};
 use std::ffi::c_void;
@@ -27,7 +26,7 @@ struct NativeCFRange {
     length: isize,
 }
 const HID_EVENT_TAP: u32 = 0;
-const KEY_COMMAND: CGKeyCode = 55;
+const COMMAND_FLAG: u64 = 1 << 20;
 const KEY_V: CGKeyCode = 9;
 
 #[derive(Clone, Debug)]
@@ -46,6 +45,7 @@ extern "C" {
         key_down: bool,
     ) -> CGEventRef;
     fn CGEventPost(tap: u32, event: CGEventRef);
+    fn CGEventSetFlags(event: CGEventRef, flags: u64);
     fn CFRelease(value: *const c_void);
     fn CFGetTypeID(value: CFTypeRef) -> CFTypeID;
     fn CFStringGetTypeID() -> CFTypeID;
@@ -264,26 +264,57 @@ fn ensure_accessibility_permission() -> Result<()> {
     ))
 }
 
-fn post(key: CGKeyCode, key_down: bool) -> Result<()> {
-    let event = unsafe { CGEventCreateKeyboardEvent(std::ptr::null_mut(), key, key_down) };
+fn paste_event(key_down: bool) -> Result<CGEventRef> {
+    let event = unsafe { CGEventCreateKeyboardEvent(std::ptr::null_mut(), KEY_V, key_down) };
     if event.is_null() {
         return Err(anyhow!(
             "macOS Accessibility API could not create a keyboard event"
         ));
     }
-    unsafe {
-        CGEventPost(HID_EVENT_TAP, event);
-        CFRelease(event);
-    }
-    Ok(())
+    // Each event carries its own modifiers; posting a Command key first does
+    // not reliably update a subsequently created event's flags.
+    unsafe { CGEventSetFlags(event, COMMAND_FLAG) };
+    Ok(event)
 }
 
 pub fn paste() -> Result<()> {
     ensure_accessibility_permission()?;
-    post(KEY_COMMAND, true)?;
-    post(KEY_V, true)?;
-    post(KEY_V, false)?;
-    post(KEY_COMMAND, false)?;
-    let _ = CFRunLoop::get_current();
+    let down = paste_event(true)?;
+    let up = match paste_event(false) {
+        Ok(event) => event,
+        Err(error) => {
+            unsafe { CFRelease(down) };
+            return Err(error);
+        }
+    };
+    unsafe {
+        CGEventPost(HID_EVENT_TAP, down);
+        CGEventPost(HID_EVENT_TAP, up);
+        CFRelease(down);
+        CFRelease(up);
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    extern "C" {
+        fn CGEventGetFlags(event: CGEventRef) -> u64;
+    }
+
+    #[test]
+    fn paste_key_events_include_command_without_posting_input() {
+        for down in [true, false] {
+            let event = paste_event(down).unwrap();
+            let flags = unsafe { CGEventGetFlags(event) };
+            unsafe { CFRelease(event) };
+            assert_eq!(
+                flags,
+                1 << 20,
+                "paste requires Command, without held shortcut modifiers"
+            );
+        }
+    }
 }
