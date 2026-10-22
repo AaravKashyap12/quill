@@ -201,7 +201,9 @@ pub async fn regenerate_scribe_review(
     Ok(payload)
 }
 
-#[tauri::command]
+// AX can call back into Quill; leave the UI thread free to answer.
+#[cfg_attr(target_os = "macos", tauri::command(async))]
+#[cfg_attr(not(target_os = "macos"), tauri::command)]
 pub fn accept_scribe_review(
     app: AppHandle,
     state: State<'_, ReviewStore>,
