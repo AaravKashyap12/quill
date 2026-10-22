@@ -1,7 +1,7 @@
 import { AlertTriangle, Check } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { dismissVoiceOverlay } from "../tauri";
 import type { Mode, ScribeReviewDraft } from "../types";
@@ -86,6 +86,13 @@ export function RecordingOverlay({
   const dismissTimer = useRef<number | null>(null);
   const hideTimer = useRef<number | null>(null);
 
+  const clearTimers = useCallback(() => {
+    for (const timer of [transitionTimer, dismissTimer, hideTimer]) {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+      timer.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
@@ -95,13 +102,6 @@ export function RecordingOverlay({
   }, [controlledPhase]);
 
   useEffect(() => {
-    const clearTimers = () => {
-      for (const timer of [transitionTimer, dismissTimer, hideTimer]) {
-        if (timer.current !== null) window.clearTimeout(timer.current);
-        timer.current = null;
-      }
-    };
-
     const scheduleDismiss = (holdMs: number) => {
       if (dismissTimer.current !== null) window.clearTimeout(dismissTimer.current);
       if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
@@ -111,16 +111,13 @@ export function RecordingOverlay({
 
     const applyEvent = (event: VoicePillEvent) => {
       if (event.mode && event.mode !== mode) return;
-      if (transitionTimer.current !== null) {
-        window.clearTimeout(transitionTimer.current);
-        transitionTimer.current = null;
-      }
+      // Every new state supersedes this surface's pending transition and hide.
+      clearTimers();
 
       setMessage(event.message ?? null);
       if (event.preview) setPreview(event.preview);
 
       if (event.state === "starting" || event.state === "recording") {
-        clearTimers();
         setPreview(null);
         setPhase(event.state);
         return;
@@ -167,24 +164,26 @@ export function RecordingOverlay({
       clearTimers();
       void unlisten.then((dispose) => dispose());
     };
-  }, [mode]);
+  }, [mode, clearTimers]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (phaseRef.current === "reviewing") return;
+        clearTimers();
         setPhase("dismissing");
-        window.setTimeout(() => void dismissVoiceOverlay(), 200);
+        hideTimer.current = window.setTimeout(() => void dismissVoiceOverlay(), 200);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [clearTimers]);
 
   const isProcessing = PROCESSING_PHASES.includes(phase);
   const composerVisible = phase === "reviewing";
 
   const showInserted = () => {
+    clearTimers();
     setPreview("Inserted");
     setMessage("Scribe draft inserted");
     setPhase("collapsing");
@@ -194,6 +193,7 @@ export function RecordingOverlay({
   };
 
   const closeComposer = () => {
+    clearTimers();
     setPhase("dismissing");
     hideTimer.current = window.setTimeout(() => void dismissVoiceOverlay(), 220);
   };

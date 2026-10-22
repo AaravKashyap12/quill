@@ -311,12 +311,11 @@ fn preview_mode(app: AppHandle, mode: Mode, active: bool) -> Result<(), String> 
 }
 
 #[tauri::command]
-fn dismiss_voice_overlay(app: AppHandle) {
-    for label in ["overlay", "scribe-overlay"] {
-        if let Some(window) = app.get_webview_window(label) {
-            let _ = window.set_ignore_cursor_events(true);
-            let _ = window.hide();
-        }
+fn dismiss_voice_overlay(window: tauri::WebviewWindow) {
+    // Tauri supplies the caller: an old surface must never hide the active mode.
+    if matches!(window.label(), "overlay" | "scribe-overlay") {
+        let _ = window.set_ignore_cursor_events(true);
+        let _ = window.hide();
     }
 }
 
