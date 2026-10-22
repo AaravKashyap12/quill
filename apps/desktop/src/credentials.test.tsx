@@ -41,6 +41,27 @@ describe("credential access recovery", () => {
     expect(invoke).toHaveBeenLastCalledWith("test_provider_connection", { provider: "groq", retryAccess: true });
   });
 
+  it("keeps status passive unless initial access is explicitly requested", async () => {
+    await getProviderKeyStatus("gemini");
+    expect(invoke).toHaveBeenLastCalledWith("get_provider_key_status", { provider: "gemini", requestAccess: false });
+    await getProviderKeyStatus("groq", true);
+    expect(invoke).toHaveBeenLastCalledWith("get_provider_key_status", { provider: "groq", requestAccess: true });
+  });
+
+  it("offers an enabled saved-key check without claiming an unchecked key is missing", () => {
+    const html = renderToStaticMarkup(<VoiceView
+      settings={{ ...defaultSettings, cleanupProvider: "gemini" }}
+      update={() => {}} providers={[]}
+      cloudStatuses={[{ provider: "gemini", configured: false, status: "unchecked", message: null }]}
+      onDetectProviders={async () => {}} onCloudStatusChange={async () => {}}
+    />);
+    expect(html).toMatch(/<button[^>]*>Check saved key<\/button>/);
+    expect(html).not.toMatch(/<button[^>]*disabled[^>]*>Check saved key<\/button>/);
+    expect(html).toContain("Gemini access not checked");
+    expect(html).not.toContain("Gemini key needed");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it("offers a retry without requiring a replacement key after denied access", () => {
     const html = renderToStaticMarkup(<VoiceView
       settings={{ ...defaultSettings, transcriptionProvider: "groq" }}

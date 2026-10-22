@@ -94,13 +94,13 @@ export async function retryRecoveryTranscription(
   return invoke<RecoveryManifest>("retry_recovery_transcription", { id, provider });
 }
 
-export async function getProviderKeyStatus(provider: CloudProvider): Promise<ProviderKeyStatus> {
+export async function getProviderKeyStatus(provider: CloudProvider, requestAccess = false): Promise<ProviderKeyStatus> {
   if (!isTauri()) {
     const configured = window.localStorage.getItem(`quill.cloud.${provider}`) === "configured";
     return { provider, configured, status: configured ? "configured" : "missing", message: null };
   }
   try {
-    return await invoke<ProviderKeyStatus>("get_provider_key_status", { provider });
+    return await invoke<ProviderKeyStatus>("get_provider_key_status", { provider, requestAccess });
   } catch (error) {
     return { provider, configured: false, status: "error", message: error instanceof Error ? error.message : String(error) };
   }

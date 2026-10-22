@@ -809,6 +809,7 @@ export function VoiceView({
       ? `Checking ${providerName}…`
       : feedback?.message
         ?? status?.message
+        ?? (status?.status === "unchecked" ? "Saved key access has not been checked this session." : null)
         ?? (status?.configured ? "Key saved securely in the system credential vault" : "Not connected");
     const inputId = `${provider}-api-key`;
     const statusId = `${provider}-connection-status`;
@@ -849,7 +850,7 @@ export function VoiceView({
               Get a {providerName} key <ExternalLink size={11} aria-hidden="true" />
             </button>
           ) : null}
-          {status?.configured || status?.status === "error" ? (
+          {status?.configured || status?.status === "error" || status?.status === "unchecked" ? (
             <>
               <button
                 type="button"
@@ -857,7 +858,7 @@ export function VoiceView({
                 disabled={cloudBusy === provider}
                 onClick={() => void retestCloudKey(provider)}
               >
-                {status.configured ? "Test connection" : "Retry access"}
+                {status.configured ? "Test connection" : status.status === "unchecked" ? "Check saved key" : "Retry access"}
               </button>
               {status.configured ? <button
                 type="button"
@@ -1242,6 +1243,8 @@ export function VoiceView({
               settings.cleanupProvider === "gemini"
                 ? cloudStatuses.some((status) => status.provider === "gemini" && status.status === "connected")
                   ? "available"
+                  : cloudStatuses.find((status) => status.provider === "gemini")?.status === "unchecked"
+                    ? "idle"
                   : "unavailable"
                 : checking ? "checking" : availableProvider ? "available" : "unavailable"
             }
@@ -1249,6 +1252,8 @@ export function VoiceView({
               settings.cleanupProvider === "gemini"
                 ? cloudStatuses.find((status) => status.provider === "gemini")?.status === "connected"
                   ? "Gemini connected"
+                  : cloudStatuses.find((status) => status.provider === "gemini")?.status === "unchecked"
+                    ? "Gemini access not checked"
                   : cloudStatuses.find((status) => status.provider === "gemini")?.configured
                     ? "Gemini needs a connection check"
                     : "Gemini key needed"

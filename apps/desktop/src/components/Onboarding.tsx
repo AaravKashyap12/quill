@@ -168,10 +168,10 @@ function CloudKeySetup({
             <button
               className="primary-button"
               type="button"
-              disabled={busy || (!key.trim() && !status?.configured && status?.status !== "error")}
+              disabled={busy || (!key.trim() && !status?.configured && status?.status !== "error" && status?.status !== "unchecked")}
               onClick={() => void connect()}
             >
-              {busy ? "Testing…" : !key.trim() && status?.status === "error" ? "Retry access" : "Save and test"}
+              {busy ? "Testing…" : !key.trim() && status?.status === "unchecked" ? "Check saved key" : !key.trim() && status?.status === "error" ? "Retry access" : "Save and test"}
             </button>
           </div>
           <p className="onboarding-key-help">

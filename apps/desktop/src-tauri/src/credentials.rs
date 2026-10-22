@@ -56,6 +56,40 @@ impl<S: CredentialStore> CredentialCache<S> {
         self.run(state, move |store| store.read(provider)).await
     }
 
+    async fn status(
+        &self,
+        provider: CloudProvider,
+        request_access: bool,
+    ) -> Result<ProviderKeyStatus, String> {
+        let configured = if request_access {
+            // Only the selected speech provider or an explicit action needs
+            // credential access. This is not permission to retry a denial.
+            self.read(provider, false).await?.is_some()
+        } else {
+            let index = match provider {
+                CloudProvider::Groq => 0,
+                CloudProvider::Gemini => 1,
+            };
+            // Status rendering must neither open Keychain nor wait behind a
+            // dialog already open for another operation. Project metadata
+            // under the lock without copying the secret into the UI result.
+            let state = self.states[index].try_lock();
+            match state.as_deref().ok().and_then(Option::as_ref) {
+                Some(Ok(key)) => key.is_some(),
+                Some(Err(error)) => return Err(error.clone()),
+                None => return Ok(status(provider, false, "unchecked", Some(
+                    "Saved key access has not been checked. It is requested only when this provider is used or you choose Check saved key.".to_owned()
+                ))),
+            }
+        };
+        Ok(status(
+            provider,
+            configured,
+            if configured { "configured" } else { "missing" },
+            None,
+        ))
+    }
+
     async fn save(&self, provider: CloudProvider, key: String) -> KeyResult {
         let key = key.trim().to_owned();
         if key.is_empty() {
@@ -240,13 +274,13 @@ pub async fn delete_provider_key(provider: CloudProvider) -> Result<ProviderKeyS
 }
 
 #[tauri::command]
-pub async fn get_provider_key_status(provider: CloudProvider) -> Result<ProviderKeyStatus, String> {
-    let configured = get_key(provider).await?.is_some();
-    Ok(if configured {
-        status(provider, true, "configured", None)
-    } else {
-        status(provider, false, "missing", None)
-    })
+pub async fn get_provider_key_status(
+    provider: CloudProvider,
+    request_access: Option<bool>,
+) -> Result<ProviderKeyStatus, String> {
+    credentials()
+        .status(provider, request_access.unwrap_or(false))
+        .await
 }
 
 #[tauri::command]
@@ -388,6 +422,66 @@ mod tests {
         )
     }
 
+    #[tokio::test]
+    async fn passive_status_never_opens_either_provider_store() {
+        let cache = CredentialCache::new(FakeStore::new(Ok(Some("fixture key".to_owned()))));
+        for provider in [CloudProvider::Groq, CloudProvider::Gemini] {
+            for _ in 0..3 {
+                let result = cache.status(provider, false).await.unwrap();
+                assert_eq!(result.status, "unchecked");
+                assert!(!result.configured);
+            }
+        }
+        assert_eq!(cache.store.reads.load(Ordering::SeqCst), 0);
+        assert!(
+            cache
+                .status(CloudProvider::Groq, true)
+                .await
+                .unwrap()
+                .configured
+        );
+        assert!(
+            cache
+                .status(CloudProvider::Groq, false)
+                .await
+                .unwrap()
+                .configured
+        );
+        assert_eq!(
+            cache
+                .status(CloudProvider::Gemini, false)
+                .await
+                .unwrap()
+                .status,
+            "unchecked"
+        );
+        assert_eq!(cache.store.reads.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn passive_status_does_not_wait_on_an_existing_os_prompt() {
+        let (cache, entered, release) = gated_cache();
+        let reader_cache = cache.clone();
+        let reader =
+            tokio::spawn(async move { reader_cache.read(CloudProvider::Groq, false).await });
+        entered.await.unwrap();
+        let observed = tokio::time::timeout(
+            Duration::from_millis(50),
+            cache.status(CloudProvider::Groq, false),
+        )
+        .await;
+        release.send(()).unwrap();
+        reader.await.unwrap().unwrap();
+        assert_eq!(
+            observed
+                .expect("passive status must remain responsive")
+                .unwrap()
+                .status,
+            "unchecked"
+        );
+        assert_eq!(cache.store.reads.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn concurrent_reads_share_one_blocking_store_read() {
         let (cache, entered, release) = gated_cache();
@@ -419,6 +513,8 @@ mod tests {
                 cache.read(CloudProvider::Groq, false).await,
                 Err("fixture denied".to_owned())
             );
+            assert!(cache.status(CloudProvider::Groq, false).await.is_err());
+            assert!(cache.status(CloudProvider::Groq, true).await.is_err());
         }
         assert_eq!(cache.store.reads.load(Ordering::SeqCst), 1);
         assert!(cache.read(CloudProvider::Groq, true).await.is_err());
@@ -442,6 +538,14 @@ mod tests {
         let cache = CredentialCache::new(FakeStore::new(Ok(None)));
         assert_eq!(cache.read(CloudProvider::Groq, false).await, Ok(None));
         *cache.store.value.lock().unwrap() = Ok(Some("fixture external key".to_owned()));
+        assert_eq!(
+            cache
+                .status(CloudProvider::Groq, true)
+                .await
+                .unwrap()
+                .status,
+            "missing"
+        );
         assert_eq!(cache.read(CloudProvider::Groq, false).await, Ok(None));
         assert!(cache
             .read(CloudProvider::Gemini, false)

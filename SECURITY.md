@@ -37,6 +37,10 @@ the issue requires Accessibility permissions.
   exit; secure erasure is not guaranteed. Only a deliberate connection retry
   rereads a missing or inaccessible key. External vault edits require saving
   again in Quill or restarting the app.
+  Passive status reads only cached metadata and never waits behind an OS prompt.
+  Unchecked is distinct from missing. Startup accesses only the selected cloud
+  speech provider; Gemini cleanup reads its key on use or an explicit check,
+  and startup does not test cloud connectivity.
 - Provider error response bodies are never logged because they can echo audio
   transcripts or prompt content.
 - Cloud speech passes through local voice-activity detection before upload.

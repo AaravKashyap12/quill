@@ -13,6 +13,7 @@ import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 import { BrandMark } from "./components/BrandMark";
 import { isScribeReady } from "./scribe";
+import { speechSetupFor } from "./speechSetup";
 import { AppUpdateBanner } from "./components/AppUpdateBanner";
 import {
   FirstRunSetup,
@@ -123,7 +124,10 @@ function SettingsApp() {
   const [section, setSection] = useState<NavigationSection>("general");
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
-  const [cloudStatuses, setCloudStatuses] = useState<ProviderKeyStatus[]>([]);
+  const [cloudStatuses, setCloudStatuses] = useState<ProviderKeyStatus[]>([
+    { provider: "groq", configured: false, status: "unchecked", message: null },
+    { provider: "gemini", configured: false, status: "unchecked", message: null },
+  ]);
   const [runtime, setRuntime] = useState<RuntimeStatus>(initialRuntimeStatus);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -140,6 +144,8 @@ function SettingsApp() {
   });
   /* Last persisted settings, so Discard can restore them without a reload. */
   const savedSettings = useRef<AppSettings>(defaultSettings);
+  const setupGeneration = useRef(0);
+  const installedModels = useRef<string[]>([]);
 
   useEffect(() => {
     let disposed = false;
@@ -154,44 +160,49 @@ function SettingsApp() {
     });
 
     async function initialiseSpeechSetup() {
-      const [loaded, installed, profile, groqStatus, geminiStatus] = await Promise.all([
+      const generation = setupGeneration.current;
+      const [loaded, installed, profile] = await Promise.all([
         loadSettings(),
         listInstalledWhisperModels(),
         getSystemProfile(),
-        getProviderKeyStatus("groq"),
-        getProviderKeyStatus("gemini"),
       ]);
       if (disposed) return;
+      installedModels.current = installed;
       setSystemProfile(profile);
-      let checkedGemini = geminiStatus;
-      if (
-        (loaded.cleanupProvider === "gemini" ||
-          loaded.transcriptionProvider === "gemini") &&
-        geminiStatus.configured
-      ) {
-        try {
-          checkedGemini = await testProviderConnection("gemini");
-        } catch (error) {
-          checkedGemini = {
-            ...geminiStatus,
-            status: "error",
-            message: error instanceof Error ? error.message : String(error),
-          };
-        }
+      if (loaded.transcriptionProvider !== "local") {
+        // The OS may wait for a password indefinitely. Keep settings usable
+        // while the selected provider's single shared access attempt runs.
+        savedSettings.current = loaded;
+        setSettings(loaded);
+        setOnboardingRequired(!loaded.onboardingCompleted);
+        setSpeechSetup({
+          phase: "checking",
+          modelId: loaded.transcriptionProvider === "gemini" ? "Gemini 3.5 Transcribe" : "Groq Cloud",
+          bytesDownloaded: 0, bytesTotal: 0, error: null,
+        });
+        setInitialising(false);
       }
+      // Only the active speech runtime needs a key at startup. Rendering
+      // another provider's status must not open a second Keychain prompt.
+      const [groqStatus, geminiStatus] = await Promise.all(
+        (["groq", "gemini"] as const).map(async (provider) => {
+          const status = await getProviderKeyStatus(provider, loaded.transcriptionProvider === provider);
+          if (!disposed) setCloudStatuses((previous) => mergeProviderKeyStatuses(previous,
+            previous.map((item) => item.provider === provider ? status : item)));
+          return status;
+        }),
+      );
       if (disposed) return;
-      setCloudStatuses([groqStatus, checkedGemini]);
+      if (generation !== setupGeneration.current) return;
 
       const selectedCloudSpeechStatus =
         loaded.transcriptionProvider === "groq"
           ? groqStatus
           : loaded.transcriptionProvider === "gemini"
-            ? checkedGemini
+            ? geminiStatus
             : undefined;
       if (selectedCloudSpeechStatus) {
-        savedSettings.current = loaded;
-        setSettings(loaded);
-        setSpeechSetup({
+        setSpeechSetup((current) => current.phase !== "checking" ? current : ({
           phase: selectedCloudSpeechStatus.configured && selectedCloudSpeechStatus.status !== "error" ? "ready" : "error",
           modelId:
             loaded.transcriptionProvider === "gemini"
@@ -200,9 +211,7 @@ function SettingsApp() {
           bytesDownloaded: 0,
           bytesTotal: 0,
           error: selectedCloudSpeechStatus.message ?? (selectedCloudSpeechStatus.configured ? null : "Connect your selected speech provider in Voice settings."),
-        });
-        setOnboardingRequired(!loaded.onboardingCompleted);
-        setInitialising(false);
+        }));
         return;
       }
 
@@ -284,6 +293,9 @@ function SettingsApp() {
     const unlistenComplete = listen<{ id: string; ok: boolean; error: string | null }>(
       "model-download://complete",
       (event) => {
+        if (event.payload.ok && !installedModels.current.includes(event.payload.id)) {
+          installedModels.current = [...installedModels.current, event.payload.id];
+        }
         setSpeechSetup((current) => {
           if (event.payload.id !== current.modelId) return current;
           return event.payload.ok
@@ -325,11 +337,15 @@ function SettingsApp() {
 
   const update = useCallback(
     <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+      if (key === "transcriptionProvider" || key === "whisperModel" || key === "language") {
+        setupGeneration.current += 1;
+        setSpeechSetup(speechSetupFor({ ...settings, [key]: value }, installedModels.current, cloudStatuses));
+      }
       setSettings((current) => ({ ...current, [key]: value }));
       setDirty(true);
       setSaved(false);
     },
-    [],
+    [settings, cloudStatuses],
   );
 
   function updateHotkey(mode: Mode, value: HotkeyConfig) {
@@ -355,6 +371,8 @@ function SettingsApp() {
   }
 
   function discard() {
+    setupGeneration.current += 1;
+    setSpeechSetup(speechSetupFor(savedSettings.current, installedModels.current, cloudStatuses));
     setSettings(savedSettings.current);
     setDirty(false);
     setSaved(false);
@@ -379,7 +397,7 @@ function SettingsApp() {
     const speechStatus = mergeProviderKeyStatuses(cloudStatuses, statuses, tested).find(
       (status) => status.provider === speechProvider,
     );
-    if (speechProvider && speechStatus) {
+    if (speechProvider && speechStatus && speechStatus.status !== "unchecked") {
       setSpeechSetup({
         phase: speechStatus.configured && speechStatus.status !== "error" ? "ready" : "error",
         modelId:
@@ -444,6 +462,7 @@ function SettingsApp() {
     speech: SetupSpeechRoute,
     scribe: SetupScribeRoute,
   ) {
+    setupGeneration.current += 1;
     const next: AppSettings = {
       ...savedSettings.current,
       transcriptionProvider: speech,
@@ -528,10 +547,13 @@ function SettingsApp() {
   }
 
   const scribeReady = isScribeReady(settings, providers, cloudStatuses);
+  const cleanupAccessUnchecked = settings.cleanupProvider === "gemini" &&
+    cloudStatuses.some((status) => status.provider === "gemini" && status.status === "unchecked");
   const showScribeSetup =
     providersChecked &&
     settings.cleanupProvider !== "disabled" &&
     !settings.scribeSetupDismissed &&
+    !cleanupAccessUnchecked &&
     !scribeReady;
   const speechPercent =
     speechSetup.bytesTotal > 0

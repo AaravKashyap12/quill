@@ -88,7 +88,7 @@ export type CloudProvider = "groq" | "gemini";
 export interface ProviderKeyStatus {
   provider: CloudProvider;
   configured: boolean;
-  status: "missing" | "configured" | "connected" | "error";
+  status: "unchecked" | "missing" | "configured" | "connected" | "error";
   message: string | null;
 }
 
