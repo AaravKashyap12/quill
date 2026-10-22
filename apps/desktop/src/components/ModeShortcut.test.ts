@@ -80,7 +80,7 @@ describe("Mac preset selection", () => {
 
   it("labels Fn and Control clearly, and does not misrecord Fn as a character", () => {
     platform("mac");
-    expect(formatHotkey({ ...defaultSettings, scribeHotkey: macShortcutPreset("scribe", "apple-fn") }, "scribe")).toBe("Ctrl ⌃ + Fn 🌐");
+    expect(formatHotkey({ ...defaultSettings, scribeHotkey: macShortcutPreset("scribe", "apple-fn") }, "scribe")).toBe("Ctrl ⌃ + Fn");
     expect(hotkeyFromEvent({ ...event, key: "Fn", altKey: false }, "hold")).toBeNull();
     expect(isModifierOnlyMacHotkey(macShortcutPreset("scribe", "apple-fn"))).toBe(true);
     platform("win");

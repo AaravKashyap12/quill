@@ -45,7 +45,7 @@ export const initialRuntimeStatus: RuntimeStatus = {
 export function formatHotkey(settings: AppSettings, mode: "dictation" | "scribe") {
   const hotkey = mode === "dictation" ? settings.dictationHotkey : settings.scribeHotkey;
   const macLabels: Record<string, string> = {
-    Fn: "Fn 🌐",
+    Fn: "Fn",
     AltRight: "Right Option ⌥",
     MetaRight: "Right Command ⌘",
     Meta: "⌘",

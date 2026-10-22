@@ -1,6 +1,6 @@
 import { isModifierOnlyMacHotkey } from "../defaults";
 import { isMac } from "../platform";
-import { ShieldCheck } from "lucide-react";
+import { Globe, ShieldCheck } from "lucide-react";
 import { MacShortcutPreset, ModeShortcut } from "../components/ModeShortcut";
 import { SettingRow } from "../components/SettingRow";
 import { Switch } from "../components/Switch";
@@ -47,7 +47,7 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
               </SettingRow>
             ))}
             <p className="privacy-note">
-              If Fn opens Emoji, switches input source, or starts Apple Dictation, set System Settings → Keyboard → Press 🌐 key to → Do Nothing.
+              If Fn opens Emoji, switches input source, or starts Apple Dictation, set System Settings → Keyboard → Press <Globe className="inline-key-icon" size={14} aria-label="Globe" /> key to → Do Nothing.
               For a keyboard without Apple Fn, select No Fn above. Custom shortcuts can still be recorded.
             </p>
           </div>

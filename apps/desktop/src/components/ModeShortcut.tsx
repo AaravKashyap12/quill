@@ -1,4 +1,4 @@
-import { Mic, PenLine, Play } from "lucide-react";
+import { Globe, Mic, PenLine, Play } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AppSettings, HotkeyConfig, Mode } from "../types";
 import { formatHotkey, macShortcutPreset } from "../defaults";
@@ -85,6 +85,18 @@ function describeKey(key: string): string {
 
 function chordFragments(label: string): string[] {
   return label.split(/\s*[+·]\s*/).map((part) => part.trim()).filter(Boolean);
+}
+
+function Keycap({ label }: { label: string }) {
+  if (isMac() && label === "Fn") {
+    return <kbd title="Fn / Globe"><span>fn</span><Globe size={14} strokeWidth={1.7} aria-hidden="true" /></kbd>;
+  }
+  if (isMac() && label === "Ctrl ⌃") {
+    return <kbd title="Control"><svg width="16" height="14" viewBox="0 0 16 14" fill="none" aria-hidden="true">
+      <path d="M3 9.5 8 4.5l5 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg></kbd>;
+  }
+  return <kbd>{label}</kbd>;
 }
 
 /** Presets do not depend on WebKit emitting the Apple Fn key event. */
@@ -224,7 +236,7 @@ export function ModeShortcut({
             {fragments.map((fragment, index) => (
               <span key={`${fragment}-${index}`}>
                 {index > 0 ? <em aria-hidden="true">+</em> : null}
-                <kbd>{fragment}</kbd>
+                <Keycap label={fragment} />
               </span>
             ))}
           </span>

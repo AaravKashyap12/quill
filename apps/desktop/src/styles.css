@@ -1645,19 +1645,29 @@ button:disabled {
 }
 
 .hotkey-recorder__chord kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-width: 20px;
-  padding: 3px 7px;
+  min-height: 24px;
+  padding: 4px 7px;
   border: 1px solid var(--line-strong);
   border-bottom-width: 1.5px;
   border-radius: 5px;
   background: rgba(255, 255, 255, 0.95);
   color: var(--ink-900);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-family: var(--font-ui);
+  font-size: 12px;
   font-weight: 550;
   line-height: 1;
   letter-spacing: 0.01em;
   text-align: center;
+}
+
+.inline-key-icon {
+  display: inline-block;
+  vertical-align: -2px;
 }
 
 .hotkey-recorder__chord em {
