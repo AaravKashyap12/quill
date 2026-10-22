@@ -37,4 +37,5 @@ third_party/
 .github/skills/
 __pycache__/
 *.pyc
+graphify-out/
 apps/desktop/src-tauri/binaries/
