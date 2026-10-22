@@ -264,3 +264,14 @@ The generated local verifier is `.agents/skills/verify-quill/SKILL.md` (ignored
 by repository convention). Its complete native feature-drive/cleanup validation
 remains pending; it is not itself E2E proof. macOS support must remain qualified
 until the native acceptance paths above pass.
+
+## Remote CI follow-up
+
+The first push passed frontend checks and macOS Rust tests, but Windows stopped
+in Tauri's build-script feature validation. Cargo declared `macos-private-api`
+globally while its matching config flag was only in the Mac override. The flag
+now lives in shared config and the redundant target-only declaration is removed.
+The pinned build checker validates these lists on every target; effective merged
+Mac config is unchanged. The config regression failed before the move and passes
+afterward. The installed candidate is unchanged. Remote rerun validates Windows;
+this is separate from physical Windows desktop verification.
