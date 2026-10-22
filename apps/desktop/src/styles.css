@@ -1973,6 +1973,10 @@ button:disabled {
   }
 }
 
+.privacy-note.mac-shortcut-hint {
+  display: block;
+}
+
 .setting-row {
   display: flex;
   min-height: 66px;

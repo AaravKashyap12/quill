@@ -49,7 +49,7 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
                 <MacShortcutPreset mode={mode} settings={settings} onChange={(hotkey) => onHotkey(mode, hotkey)} />
               </SettingRow>
             ))}
-            <p className="privacy-note">
+            <p className="privacy-note mac-shortcut-hint">
               If Fn opens Emoji, switches input source, or starts Apple Dictation, set System Settings → Keyboard → Press <Globe className="inline-key-icon" size={14} aria-label="Globe" /> key to → Do Nothing.
               For a keyboard without Apple Fn, select No Fn above. Custom shortcuts can still be recorded.
             </p>
