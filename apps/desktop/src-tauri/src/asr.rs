@@ -253,7 +253,14 @@ impl WhisperServer {
             .resource_dir()
             .context("Tauri did not provide the packaged resource directory")?;
         let (runtime, executable) = locate_whisper_runtime(&resource_root)?;
-        let model = locate_whisper_model(app, &resource_root, &settings.whisper_model)?;
+        let model_app = app.clone();
+        let model_root = resource_root.clone();
+        let model_id = settings.whisper_model.clone();
+        // Hash large installed models off the async runtime before the sidecar can load them.
+        let model = tokio::task::spawn_blocking(move || {
+            locate_whisper_model(&model_app, &model_root, &model_id)
+        })
+        .await??;
         if !executable.is_file() {
             return Err(anyhow!(
                 "Could not find the packaged whisper.cpp server at {}. Reinstall Quill from a complete release build.",
@@ -765,11 +772,22 @@ impl Drop for WhisperServer {
 /// the only place non-bundled models (multilingual variants, larger sizes)
 /// can live.
 fn locate_whisper_model(app: &AppHandle, resource_root: &Path, model_id: &str) -> Result<PathBuf> {
+    let user_dir = crate::downloads::user_model_dir(app).ok();
+    locate_whisper_model_in(user_dir.as_deref(), resource_root, model_id)
+}
+
+fn locate_whisper_model_in(
+    user_dir: Option<&Path>,
+    resource_root: &Path,
+    model_id: &str,
+) -> Result<PathBuf> {
     let file_name = format!("ggml-{model_id}.bin");
 
-    if let Ok(user_dir) = crate::downloads::user_model_dir(app) {
+    if let Some(user_dir) = user_dir {
         let user_path = user_dir.join(&file_name);
         if user_path.is_file() {
+            crate::downloads::validate_model_file(&user_path, model_id)
+                .map_err(anyhow::Error::msg)?;
             return Ok(user_path);
         }
     }
@@ -779,10 +797,13 @@ fn locate_whisper_model(app: &AppHandle, resource_root: &Path, model_id: &str) -
         .join("models")
         .join(&file_name);
     if bundled.is_file() {
+        crate::downloads::validate_model_file(&bundled, model_id).map_err(anyhow::Error::msg)?;
         return Ok(bundled);
     }
     let bundled_flat = resource_root.join("models").join(&file_name);
     if bundled_flat.is_file() {
+        crate::downloads::validate_model_file(&bundled_flat, model_id)
+            .map_err(anyhow::Error::msg)?;
         return Ok(bundled_flat);
     }
 
@@ -823,6 +844,33 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_model_validation_rejects_corrupt_user_and_bundled_files() {
+        let root = std::env::temp_dir().join(format!(
+            "quill-model-validation-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for directory in [
+            root.join("user"),
+            root.join("resources/models"),
+            root.join("models"),
+        ] {
+            std::fs::create_dir_all(&directory).unwrap();
+            let file = directory.join("ggml-base.en.bin");
+            std::fs::write(&file, b"truncated model").unwrap();
+            let result = locate_whisper_model_in(Some(&root.join("user")), &root, "base.en");
+            std::fs::remove_file(file).unwrap();
+            let error =
+                result.expect_err("an invalid installed model must never reach the sidecar");
+            assert!(error.to_string().contains("verification failed"));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn windows_process_paths_compare_case_and_separator_insensitively() {

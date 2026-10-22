@@ -38,21 +38,61 @@ const REQUIRED_CUDA_FILES: &[&str] = &[
     CUDA_MANIFEST_NAME,
 ];
 
-/// Registry of whisper.cpp GGML models Quill knows how to fetch.
-/// URLs resolve to the raw `ggml-<id>.bin` on Hugging Face.
-const REGISTRY: &[(&str, u64)] = &[
-    // (id, approximate size in bytes — used for a progress fallback if the
-    //   server does not report Content-Length)
-    ("tiny.en", 77_691_713),
-    ("tiny", 77_691_713),
-    ("base.en", 147_951_465),
-    ("base", 147_951_465),
-    ("small.en", 487_593_953),
-    ("small", 487_593_953),
-    ("medium.en", 1_533_763_425),
-    ("medium", 1_533_763_425),
-    ("distil-large-v3", 1_520_000_000),
-    ("large-v3-turbo", 1_624_555_275),
+// SHA-256 and exact sizes from upstream Hugging Face LFS metadata.
+// Keep these revisions, digests, and sizes together; see docs/model-verification.md.
+const WHISPER_MODEL_REVISION: &str = "5359861c739e955e79d9a303bcbc70fb988958b1";
+const DISTIL_MODEL_REVISION: &str = "0d78dd96ed9fc152325f63b53788fec3b43de031";
+const REGISTRY: &[(&str, u64, &str)] = &[
+    (
+        "tiny.en",
+        77_704_715,
+        "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f",
+    ),
+    (
+        "tiny",
+        77_691_713,
+        "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+    ),
+    (
+        "base.en",
+        147_964_211,
+        "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+    ),
+    (
+        "base",
+        147_951_465,
+        "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+    ),
+    (
+        "small.en",
+        487_614_201,
+        "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d",
+    ),
+    (
+        "small",
+        487_601_967,
+        "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+    ),
+    (
+        "medium.en",
+        1_533_774_781,
+        "cc37e93478338ec7700281a7ac30a10128929eb8f427dda2e865faa8f6da4356",
+    ),
+    (
+        "medium",
+        1_533_763_059,
+        "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
+    ),
+    (
+        "distil-large-v3",
+        1_519_521_155,
+        "2883a11b90fb10ed592d826edeaee7d2929bf1ab985109fe9e1e7b4d2b69a298",
+    ),
+    (
+        "large-v3-turbo",
+        1_624_555_275,
+        "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+    ),
 ];
 
 /// Tracks in-flight downloads so the frontend can cancel and the model
@@ -197,23 +237,76 @@ pub fn get_cuda_runtime_status(app: AppHandle) -> Result<CudaRuntimeStatus, Stri
 }
 
 fn is_known(id: &str) -> bool {
-    REGISTRY.iter().any(|(known, _)| *known == id)
+    REGISTRY.iter().any(|(known, _, _)| *known == id)
 }
 
 fn expected_size(id: &str) -> u64 {
     REGISTRY
         .iter()
-        .find(|(known, _)| *known == id)
-        .map(|(_, size)| *size)
+        .find(|(known, _, _)| *known == id)
+        .map(|(_, size, _)| *size)
         .unwrap_or(0)
 }
 
 fn model_url(id: &str) -> String {
     if id == "distil-large-v3" {
-        return "https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin"
-            .to_owned();
+        return format!("https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/{DISTIL_MODEL_REVISION}/ggml-distil-large-v3.bin");
     }
-    format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{id}.bin")
+    format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_MODEL_REVISION}/ggml-{id}.bin")
+}
+
+fn model_sha256(id: &str) -> Result<&'static str, String> {
+    REGISTRY
+        .iter()
+        .find(|(known, _, _)| *known == id)
+        .map(|(_, _, digest)| *digest)
+        .ok_or_else(|| format!("unknown model: {id}"))
+}
+
+fn verify_sha256(id: &str, actual: &str, expected: &str) -> Result<(), String> {
+    if !actual.eq_ignore_ascii_case(expected) {
+        return Err(format!(
+            "SHA-256 verification failed for {id}. Remove it and download it again from Voice settings."
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_model_file(path: &Path, id: &str) -> Result<(), String> {
+    verify_model_file(path, id, expected_size(id), model_sha256(id)?)
+}
+
+fn verify_model_file(path: &Path, id: &str, size: u64, sha256: &str) -> Result<(), String> {
+    let mut file = File::open(path).map_err(|error| error.to_string())?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() != size {
+        return Err(format!(
+            "Model size verification failed for {id}. Remove it and download it again from Voice settings."
+        ));
+    }
+    let mut hasher = Sha256::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    verify_sha256(id, &format!("{:x}", hasher.finalize()), sha256)
+}
+
+fn verify_download_checksum(
+    temp: &Path,
+    id: &str,
+    actual: &str,
+    expected: &str,
+) -> Result<(), String> {
+    let result = verify_sha256(id, actual, expected);
+    if result.is_err() {
+        let _ = std::fs::remove_file(temp);
+    }
+    result
 }
 
 fn model_file(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
@@ -289,7 +382,7 @@ async fn perform_model_download(
         id,
         &model_url(id),
         expected_size(id),
-        None,
+        model_sha256(id)?,
         &temp,
         cancelled,
     )
@@ -304,7 +397,7 @@ async fn download_to_file(
     id: &str,
     url: &str,
     fallback_size: u64,
-    expected_sha256: Option<&str>,
+    expected_sha256: &str,
     temp: &Path,
     cancelled: &Arc<RwLock<HashSet<String>>>,
 ) -> Result<(), String> {
@@ -363,13 +456,12 @@ async fn download_to_file(
     file.flush().await.map_err(|e| e.to_string())?;
     drop(file);
 
-    if let Some(expected) = expected_sha256 {
-        let actual = format!("{:x}", hasher.finalize());
-        if !actual.eq_ignore_ascii_case(expected) {
-            let _ = tokio::fs::remove_file(temp).await;
-            return Err(format!("SHA-256 verification failed for {id}"));
-        }
-    }
+    verify_download_checksum(
+        temp,
+        id,
+        &format!("{:x}", hasher.finalize()),
+        expected_sha256,
+    )?;
 
     // Emit one final progress event so the UI reads 100% before the completion event lands.
     let _ = app.emit(
@@ -547,7 +639,7 @@ async fn perform_cuda_download(
         CUDA_RUNTIME_ID,
         &format!("{CUDA_RELEASE_BASE_URL}/{CUDA_ASSET_NAME}"),
         CUDA_RUNTIME_DOWNLOAD_BYTES,
-        Some(&expected_sha256),
+        &expected_sha256,
         &archive_path,
         cancelled,
     )
@@ -701,7 +793,7 @@ mod tests {
         assert!(is_known("distil-large-v3"));
         assert_eq!(
             model_url("distil-large-v3"),
-            "https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin"
+            format!("https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/{DISTIL_MODEL_REVISION}/ggml-distil-large-v3.bin")
         );
     }
 
@@ -709,8 +801,72 @@ mod tests {
     fn standard_models_keep_the_whisper_cpp_repository() {
         assert_eq!(
             model_url("base.en"),
-            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
+            format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_MODEL_REVISION}/ggml-base.en.bin")
         );
+    }
+
+    fn model_fixture() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "quill-model-checksum-{}-{nonce}.bin.part",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"abc").unwrap();
+        path
+    }
+
+    const ABC_SHA256: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+    #[test]
+    fn installed_model_checksum_accepts_exact_bytes_and_rejects_corruption() {
+        let path = model_fixture();
+        assert_eq!(verify_model_file(&path, "fixture", 3, ABC_SHA256), Ok(()));
+        std::fs::write(&path, b"abd").unwrap();
+        let error = verify_model_file(&path, "fixture", 3, ABC_SHA256).unwrap_err();
+        assert!(error.contains("SHA-256 verification failed"));
+        assert!(path.is_file(), "installed files are not silently removed");
+        std::fs::write(&path, b"ab").unwrap();
+        let error = verify_model_file(&path, "fixture", 3, ABC_SHA256).unwrap_err();
+        assert!(error.contains("size verification failed"));
+        assert!(validate_model_file(&path, "unregistered")
+            .unwrap_err()
+            .contains("unknown model"));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn download_checksum_rejects_mismatches_and_truncation_before_install() {
+        for bytes in [b"abd".as_slice(), b"ab".as_slice(), b"".as_slice()] {
+            let path = model_fixture();
+            std::fs::write(&path, bytes).unwrap();
+            let actual = format!("{:x}", Sha256::digest(bytes));
+            assert!(verify_download_checksum(&path, "fixture", &actual, ABC_SHA256).is_err());
+            assert!(!path.exists(), "unverified downloads must be removed");
+        }
+        let path = model_fixture();
+        assert_eq!(
+            verify_download_checksum(&path, "fixture", ABC_SHA256, ABC_SHA256),
+            Ok(())
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"abc");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn every_registered_model_has_a_pinned_digest_and_revision() {
+        let mut ids = HashSet::new();
+        for (id, size, sha256) in REGISTRY {
+            assert!(ids.insert(id));
+            assert!(*size > 0);
+            assert_eq!(sha256.len(), 64);
+            assert!(sha256.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            assert_eq!(model_sha256(id), Ok(*sha256));
+            assert!(!model_url(id).contains("/main/"));
+        }
+        assert!(model_sha256("../other").is_err());
     }
 
     #[test]
