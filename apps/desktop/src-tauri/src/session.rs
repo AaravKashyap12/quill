@@ -1698,7 +1698,8 @@ mod tests {
             hotkeys::HotkeyState {
                 down: true,
                 pressed: true,
-                ..Default::default()
+                #[cfg(target_os = "macos")]
+                sampled_presses: None,
             },
             &config,
         ));
@@ -1707,7 +1708,8 @@ mod tests {
             hotkeys::HotkeyState {
                 down: true,
                 pressed: true,
-                ..Default::default()
+                #[cfg(target_os = "macos")]
+                sampled_presses: None,
             },
             &config,
         ));
@@ -1725,7 +1727,8 @@ mod tests {
             hotkeys::HotkeyState {
                 down: true,
                 pressed: true,
-                ..Default::default()
+                #[cfg(target_os = "macos")]
+                sampled_presses: None,
             },
             &config,
         ));
@@ -1748,12 +1751,14 @@ mod tests {
             hotkeys::HotkeyState {
                 down: true,
                 pressed: true,
-                ..Default::default()
+                #[cfg(target_os = "macos")]
+                sampled_presses: None,
             },
             hotkeys::HotkeyState {
                 down: false,
                 pressed: false,
-                ..Default::default()
+                #[cfg(target_os = "macos")]
+                sampled_presses: None,
             },
         ];
 
