@@ -1,7 +1,7 @@
 import { Mic, PenLine, Play } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AppSettings, HotkeyConfig, Mode } from "../types";
-import { formatHotkey } from "../defaults";
+import { formatHotkey, macShortcutPreset } from "../defaults";
 import { isMac } from "../platform";
 import { setHotkeyCapture } from "../tauri";
 
@@ -21,7 +21,7 @@ export function hotkeyFromEvent(
   behavior: HotkeyConfig["behavior"],
 ): HotkeyResult | null {
   // Modifier-only presses aren't a full chord yet — wait for the trigger key.
-  if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return null;
+  if (["Control", "Shift", "Alt", "Meta", "Fn"].includes(event.key)) return null;
 
   const mac = isMac();
   if (event.metaKey && !mac) {
@@ -85,6 +85,38 @@ function describeKey(key: string): string {
 
 function chordFragments(label: string): string[] {
   return label.split(/\s*[+·]\s*/).map((part) => part.trim()).filter(Boolean);
+}
+
+/** Presets do not depend on WebKit emitting the Apple Fn key event. */
+export function MacShortcutPreset({ mode, settings, onChange }: Pick<ModeShortcutProps, "mode" | "settings" | "onChange">) {
+  const current = mode === "dictation" ? settings.dictationHotkey : settings.scribeHotkey;
+  const presets = ["apple-fn", "no-fn"] as const;
+  const selected = presets.find((preset) => {
+    const hotkey = macShortcutPreset(mode, preset);
+    return hotkey.key === current.key && hotkey.behavior === current.behavior
+      && hotkey.modifiers.length === current.modifiers.length
+      && hotkey.modifiers.every((modifier) => current.modifiers.includes(modifier));
+  }) ?? "custom";
+  return (
+    <select
+      aria-label={`${mode === "dictation" ? "Dictation" : "Scribe"} shortcut preset`}
+      value={selected}
+      onChange={(event) => {
+        const preset = event.target.value;
+        if (preset === "apple-fn" || preset === "no-fn") onChange(macShortcutPreset(mode, preset));
+      }}
+    >
+      <option value="custom" disabled>Custom shortcut</option>
+      {presets.map((preset) => (
+        <option key={preset} value={preset}>
+          {preset === "apple-fn" ? "Apple Fn" : "No Fn"}: {formatHotkey({
+            ...settings,
+            [mode === "dictation" ? "dictationHotkey" : "scribeHotkey"]: macShortcutPreset(mode, preset),
+          }, mode)}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 export function ModeShortcut({

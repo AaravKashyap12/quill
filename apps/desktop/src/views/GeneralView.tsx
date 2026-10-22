@@ -1,6 +1,7 @@
-import { isStandaloneMacHotkey } from "../defaults";
+import { isModifierOnlyMacHotkey } from "../defaults";
+import { isMac } from "../platform";
 import { ShieldCheck } from "lucide-react";
-import { ModeShortcut } from "../components/ModeShortcut";
+import { MacShortcutPreset, ModeShortcut } from "../components/ModeShortcut";
 import { SettingRow } from "../components/SettingRow";
 import { Switch } from "../components/Switch";
 import type { AppSettings, HotkeyConfig, Mode } from "../types";
@@ -38,6 +39,19 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
             onPreview={(active) => onPreview("scribe", active)}
           />
         </div>
+        {isMac() && (
+          <div className="settings-group">
+            {(["dictation", "scribe"] as const).map((mode) => (
+              <SettingRow key={mode} label={`${mode === "dictation" ? "Dictation" : "Scribe"} preset`}>
+                <MacShortcutPreset mode={mode} settings={settings} onChange={(hotkey) => onHotkey(mode, hotkey)} />
+              </SettingRow>
+            ))}
+            <p className="privacy-note">
+              If Fn opens Emoji, switches input source, or starts Apple Dictation, set System Settings → Keyboard → Press 🌐 key to → Do Nothing.
+              For a keyboard without Apple Fn, select No Fn above. Custom shortcuts can still be recorded.
+            </p>
+          </div>
+        )}
       </section>
 
       <section aria-labelledby="behavior-title">
@@ -47,8 +61,8 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
         <div className="settings-group">
           <SettingRow
             label="Dictation activation"
-            description={isStandaloneMacHotkey(settings.dictationHotkey)
-              ? "Hold the key alone briefly to start. Release to insert; other keys cancel."
+            description={isModifierOnlyMacHotkey(settings.dictationHotkey)
+              ? "Hold only the shortcut keys for 250 ms to start. Release to insert; other keys cancel."
               : "Hold the shortcut, or tap once to start and again to stop."}
           >
             <div className="activation-toggle" role="group" aria-label="Dictation activation">
@@ -58,7 +72,7 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
                   type="button"
                   className={settings.dictationHotkey.behavior === behavior ? "is-active" : ""}
                   aria-pressed={settings.dictationHotkey.behavior === behavior}
-                  disabled={behavior === "tap-to-lock" && isStandaloneMacHotkey(settings.dictationHotkey)}
+                  disabled={behavior === "tap-to-lock" && isModifierOnlyMacHotkey(settings.dictationHotkey)}
                   onClick={() =>
                     onHotkey("dictation", { ...settings.dictationHotkey, behavior })
                   }
@@ -70,8 +84,8 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
           </SettingRow>
           <SettingRow
             label="Scribe activation"
-            description={isStandaloneMacHotkey(settings.scribeHotkey)
-              ? "Hold the key alone briefly to start. Release to review; other keys cancel."
+            description={isModifierOnlyMacHotkey(settings.scribeHotkey)
+              ? "Hold only the shortcut keys for 250 ms to start. Release to review; other keys cancel."
               : "Configure Scribe independently from Dictation."}
           >
             <div className="activation-toggle" role="group" aria-label="Scribe activation">
@@ -81,7 +95,7 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
                   type="button"
                   className={settings.scribeHotkey.behavior === behavior ? "is-active" : ""}
                   aria-pressed={settings.scribeHotkey.behavior === behavior}
-                  disabled={behavior === "tap-to-lock" && isStandaloneMacHotkey(settings.scribeHotkey)}
+                  disabled={behavior === "tap-to-lock" && isModifierOnlyMacHotkey(settings.scribeHotkey)}
                   onClick={() =>
                     onHotkey("scribe", { ...settings.scribeHotkey, behavior })
                   }

@@ -9,6 +9,7 @@ type CGKeyCode = u16;
 type CGEventSourceStateID = i32;
 const COMBINED_SESSION_STATE: CGEventSourceStateID = 0;
 const KEY_SPACE: CGKeyCode = 49;
+const KEY_FN: CGKeyCode = 63;
 const KEY_CONTROL: CGKeyCode = 59;
 const KEY_SHIFT: CGKeyCode = 56;
 const KEY_OPTION: CGKeyCode = 58;
@@ -28,6 +29,7 @@ extern "C" {
 fn key_code(key: &str) -> Option<CGKeyCode> {
     match key {
         "Space" => Some(KEY_SPACE),
+        "Fn" => Some(KEY_FN),
         "AltRight" => Some(KEY_RIGHT_OPTION),
         "MetaRight" => Some(KEY_RIGHT_COMMAND),
         // Letter key codes are deliberately explicit because macOS key codes
@@ -97,8 +99,38 @@ fn sample_with(hotkey: &HotkeyConfig, down: impl Fn(CGKeyCode) -> bool) -> KeySa
         });
     KeySample {
         modifiers_down,
-        key_down: key_code(&hotkey.key).is_some_and(down),
+        key_down: trigger_down(hotkey, down),
     }
+}
+
+fn modifier_only(config: &HotkeyConfig) -> bool {
+    matches!(config.key.as_str(), "Fn" | "Alt" | "AltRight" | "MetaRight")
+}
+
+fn trigger_down(config: &HotkeyConfig, down: impl Fn(CGKeyCode) -> bool) -> bool {
+    if config.key == "Alt" {
+        down(KEY_OPTION) || down(KEY_RIGHT_OPTION)
+    } else {
+        key_code(&config.key).is_some_and(down)
+    }
+}
+
+fn allowed_key(config: &HotkeyConfig, key: CGKeyCode) -> bool {
+    if key_code(&config.key) == Some(key)
+        || (config.key == "Alt" && matches!(key, KEY_OPTION | KEY_RIGHT_OPTION))
+    {
+        return true;
+    }
+    config
+        .modifiers
+        .iter()
+        .any(|modifier| match modifier.as_str() {
+            "Ctrl" => matches!(key, KEY_CONTROL | KEY_RIGHT_CONTROL),
+            "Shift" => matches!(key, KEY_SHIFT | KEY_RIGHT_SHIFT),
+            "Alt" => matches!(key, KEY_OPTION | KEY_RIGHT_OPTION),
+            "Meta" => matches!(key, KEY_COMMAND | KEY_RIGHT_COMMAND),
+            _ => false,
+        })
 }
 
 // Device-side masks from Apple's IOLLEvent.h. CG key-state booleans can alias
@@ -135,14 +167,13 @@ impl KeySnapshot {
         };
         for config in [&configs.0, &configs.1] {
             if let Some(key) = key_code(&config.key) {
+                // Fn must use physical key 63: secondaryFn flags also mark navigation keys.
                 keys[key as usize] = read(key);
             }
         }
-        let checking_exclusivity = [&configs.0, &configs.1].iter().any(|config| {
-            config.modifiers.is_empty()
-                && matches!(config.key.as_str(), "AltRight" | "MetaRight")
-                && key_code(&config.key).is_some_and(|key| keys[key as usize])
-        });
+        let checking_exclusivity = [&configs.0, &configs.1]
+            .iter()
+            .any(|config| modifier_only(config) && trigger_down(config, |key| keys[key as usize]));
         if checking_exclusivity {
             for (key, state) in keys.iter_mut().enumerate() {
                 *state = read(key as CGKeyCode);
@@ -156,7 +187,7 @@ impl KeySnapshot {
             self.0
                 .iter()
                 .enumerate()
-                .filter(|(key, down)| **down && Some(*key as CGKeyCode) != key_code(&config.key))
+                .filter(|(key, down)| **down && !allowed_key(config, *key as CGKeyCode))
                 .count()
         })
     }
@@ -234,27 +265,21 @@ struct Sample {
 
 impl KeyTracker {
     fn update(&mut self, config: &HotkeyConfig, keys: &KeySnapshot, now: Duration) -> Sample {
-        let standalone =
-            config.modifiers.is_empty() && matches!(config.key.as_str(), "AltRight" | "MetaRight");
-        if !standalone {
+        if !modifier_only(config) {
             self.active = sample_with(config, |key| keys.0[key as usize]).down();
             return Sample {
                 down: self.active,
                 cancelled: false,
             };
         }
-        // Standalone keys are holds only; reject malformed persisted tap bindings.
+        // Modifier-only shortcuts are exclusive holds, including persisted settings.
         if config.behavior != HotkeyBehavior::Hold {
             return Sample::default();
         }
-        let key = key_code(&config.key).unwrap() as usize;
-        let other = keys
-            .0
-            .iter()
-            .enumerate()
-            .any(|(index, down)| index != key && *down);
+        let sample = sample_with(config, |key| keys.0[key as usize]);
+        let other = keys.conflicts(config).is_some_and(|count| count > 0);
         let cancelled = self.active && other;
-        if !keys.0[key] {
+        if !sample.key_down {
             *self = Self::default();
             return Sample {
                 down: false,
@@ -263,10 +288,16 @@ impl KeyTracker {
         }
         if other {
             self.blocked = true;
-            self.started = None;
         }
-        self.active = !self.blocked
-            && now.saturating_sub(*self.started.get_or_insert(now)) >= Duration::from_millis(250);
+        // A competing chord latches until the trigger is released. In particular,
+        // releasing Ctrl from Fn+Ctrl must never fall through to Fn Dictation.
+        if self.blocked || !sample.modifiers_down {
+            self.started = None;
+            self.active = false;
+        } else {
+            self.active =
+                now.saturating_sub(*self.started.get_or_insert(now)) >= Duration::from_millis(250);
+        }
         Sample {
             down: self.active,
             cancelled,
@@ -302,7 +333,7 @@ impl PollingState {
         tracing::info!(
             dictation_key = %dictation.key, dictation_behavior = ?dictation.behavior,
             scribe_key = %scribe.key, scribe_behavior = ?scribe.behavior,
-            "hotkey sampler configuration reset; standalone threshold 250ms, poll 8ms"
+            "hotkey sampler configuration reset; modifier-only threshold 250ms, poll 8ms"
         );
         self.configs = Some((dictation.clone(), scribe.clone()));
     }
@@ -486,6 +517,227 @@ mod tests {
             keys[key as usize] = true;
         }
         KeySnapshot(keys, true)
+    }
+
+    fn modifier_chord(key: &str, modifiers: &[&str]) -> HotkeyConfig {
+        HotkeyConfig {
+            modifiers: modifiers.iter().map(|name| (*name).into()).collect(),
+            ..standalone(key)
+        }
+    }
+
+    #[test]
+    fn navigation_secondary_fn_flag_is_not_physical_fn() {
+        let configs = (standalone("Fn"), modifier_chord("Fn", &["Ctrl"]));
+        for navigation in [115, 116, 119, 121, 123, 124, 125, 126] {
+            let mut state = PollingState::default();
+            state.configure(&configs.0, &configs.1);
+            let snapshot = KeySnapshot::read_with(&configs, 1 << 23, |key| key == navigation);
+            state.update(&snapshot, Duration::ZERO);
+            state.update(&snapshot, Duration::from_secs(1));
+            let (pair, cancelled) = state.drain();
+            assert!(!pair.0.down && !pair.1.down);
+            assert_eq!(pair.0.press_count(false), 0);
+            assert_eq!(cancelled, (false, false));
+        }
+        // Conversely, physical Fn works without trusting that aggregate flag.
+        let snapshot = KeySnapshot::read_with(&configs, 0, |key| key == KEY_FN);
+        let mut tracker = KeyTracker::default();
+        tracker.update(&configs.0, &snapshot, Duration::ZERO);
+        assert!(
+            tracker
+                .update(&configs.0, &snapshot, Duration::from_millis(250))
+                .down
+        );
+    }
+
+    #[test]
+    fn fn_navigation_chord_never_becomes_dictation_when_navigation_is_released() {
+        let configs = (standalone("Fn"), modifier_chord("Fn", &["Ctrl"]));
+        for navigation in [115, 116, 119, 121, 123, 124, 125, 126] {
+            let mut state = PollingState::default();
+            state.configure(&configs.0, &configs.1);
+            let chord =
+                KeySnapshot::read_with(&configs, 1 << 23, |key| key == KEY_FN || key == navigation);
+            state.update(&chord, Duration::ZERO);
+            state.update(&chord, Duration::from_millis(250));
+            let fn_only = KeySnapshot::read_with(&configs, 1 << 23, |key| key == KEY_FN);
+            state.update(&fn_only, Duration::from_secs(1));
+            let (pair, cancelled) = state.drain();
+            assert!(!pair.0.down && !pair.1.down);
+            assert_eq!(pair.0.press_count(false), 0);
+            assert_eq!(cancelled, (false, false));
+        }
+    }
+
+    #[test]
+    fn no_fn_preset_uses_normalized_physical_flags_and_exclusive_holds() {
+        let configs = (
+            modifier_chord("Alt", &["Ctrl"]),
+            modifier_chord("Alt", &["Meta", "Ctrl"]),
+        );
+        for flags in [0x1 | 0x20, 0x2000 | 0x40] {
+            let mut state = PollingState::default();
+            state.configure(&configs.0, &configs.1);
+            let clean = KeySnapshot::read_with(&configs, flags, |_| false);
+            state.update(&clean, Duration::ZERO);
+            state.update(&clean, Duration::from_millis(249));
+            assert!(!state.drain().0 .0.down);
+            state.update(&clean, Duration::from_millis(250));
+            assert!(state.drain().0 .0.down);
+            let typing = KeySnapshot::read_with(&configs, flags, |key| key == 2);
+            state.update(&typing, Duration::from_millis(260));
+            state.update(&clean, Duration::from_secs(1));
+            let (pair, cancelled) = state.drain();
+            assert!(!pair.0.down && !pair.1.down);
+            assert_eq!(cancelled, (true, false));
+        }
+    }
+
+    #[test]
+    fn modifier_presets_prefer_scribe_in_either_press_order_and_never_fall_through() {
+        for (dictation, scribe, trigger, ctrl, command) in [
+            (
+                standalone("Fn"),
+                modifier_chord("Fn", &["Ctrl"]),
+                63,
+                59,
+                None,
+            ),
+            (
+                standalone("Fn"),
+                modifier_chord("Fn", &["Ctrl"]),
+                63,
+                62,
+                None,
+            ),
+            (
+                modifier_chord("Alt", &["Ctrl"]),
+                modifier_chord("Alt", &["Meta", "Ctrl"]),
+                58,
+                59,
+                Some(55),
+            ),
+            (
+                modifier_chord("Alt", &["Ctrl"]),
+                modifier_chord("Alt", &["Meta", "Ctrl"]),
+                61,
+                62,
+                Some(54),
+            ),
+        ] {
+            let mut full = vec![trigger, ctrl];
+            if let Some(command) = command {
+                full.push(command);
+            }
+            for trigger_first in [false, true] {
+                let mut state = PollingState::default();
+                state.configure(&dictation, &scribe);
+                let first = if trigger_first {
+                    vec![trigger]
+                } else {
+                    full.iter().copied().filter(|key| *key != trigger).collect()
+                };
+                state.update(&keys(&first), Duration::ZERO);
+                state.update(&keys(&full), Duration::from_millis(100));
+                state.update(&keys(&full), Duration::from_millis(349));
+                assert_eq!(state.down, (false, false));
+                state.update(&keys(&full), Duration::from_millis(350));
+                let (pair, cancelled) = state.drain();
+                assert_eq!(pair.0.press_count(false), 0, "Dictation must not start");
+                assert!(pair.1.down);
+                assert_eq!(pair.1.press_count(false), 1);
+                assert_eq!(cancelled, (false, false));
+                // Release the distinguishing modifier while still holding the trigger.
+                let remaining = if command.is_some() {
+                    vec![trigger, ctrl]
+                } else {
+                    vec![trigger]
+                };
+                state.update(&keys(&remaining), Duration::from_millis(400));
+                state.update(&keys(&remaining), Duration::from_millis(900));
+                assert_eq!(state.down, (false, false));
+                assert_eq!(state.drain().0 .0.press_count(false), 0);
+                state.update(&keys(&[]), Duration::from_millis(910));
+                state.update(&keys(&remaining), Duration::from_millis(920));
+                state.update(&keys(&remaining), Duration::from_millis(1170));
+                assert!(
+                    state.drain().0 .0.down,
+                    "fresh Dictation hold after release"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fn_scribe_other_keys_cancel_and_remain_blocked_until_fn_release() {
+        let configs = (standalone("Fn"), modifier_chord("Fn", &["Ctrl"]));
+        for other in (0..128).filter(|key| ![63, 59, 62].contains(key)) {
+            let mut state = PollingState::default();
+            state.configure(&configs.0, &configs.1);
+            state.update(&keys(&[63, 59]), Duration::ZERO);
+            state.update(&keys(&[63, 59]), Duration::from_millis(250));
+            assert!(state.drain().0 .1.down);
+            state.update(&keys(&[63, 59, other]), Duration::from_millis(260));
+            state.update(&keys(&[63, 59]), Duration::from_millis(1000));
+            let (pair, cancelled) = state.drain();
+            assert!(!pair.0.down && !pair.1.down);
+            assert_eq!(cancelled, (false, true), "other key {other}");
+            assert_eq!(state.drain().1, (false, false));
+            state.update(&keys(&[]), Duration::from_millis(1010));
+            state.update(&keys(&[63, 59]), Duration::from_millis(1020));
+            state.update(&keys(&[63, 59]), Duration::from_millis(1269));
+            assert!(!state.drain().0 .1.down);
+            state.update(&keys(&[63, 59]), Duration::from_millis(1270));
+            assert!(state.drain().0 .1.down);
+        }
+    }
+
+    #[test]
+    fn late_control_cancels_active_dictation_before_scribe_and_survives_drain() {
+        let mut monitor = HotkeyMonitor {
+            state: Arc::new(Mutex::new(PollingState::default())),
+            stop: Arc::new(AtomicBool::new(false)),
+            worker: None,
+            cancelled: (false, false),
+        };
+        let configs = (standalone("Fn"), modifier_chord("Fn", &["Ctrl"]));
+        monitor.drain_pair(&configs.0, &configs.1);
+        {
+            let mut state = monitor.state.lock().unwrap();
+            state.update(&keys(&[63]), Duration::ZERO);
+            state.update(&keys(&[63]), Duration::from_millis(250));
+        }
+        assert!(monitor.drain_pair(&configs.0, &configs.1)[0].0.down);
+        assert_eq!(monitor.take_cancelled(), (false, false));
+        {
+            let mut state = monitor.state.lock().unwrap();
+            state.update(&keys(&[63, 59]), Duration::from_millis(300));
+            state.update(&keys(&[63, 59]), Duration::from_millis(550));
+        }
+        let pair = monitor.drain_pair(&configs.0, &configs.1)[0];
+        assert!(!pair.0.down && pair.1.down);
+        // The session consumes this before processing release/transcription/upload.
+        assert_eq!(monitor.take_cancelled(), (true, false));
+        assert_eq!(monitor.take_cancelled(), (false, false));
+    }
+
+    #[test]
+    fn modifier_only_tap_bindings_fail_closed() {
+        for (mut config, down) in [
+            (standalone("Fn"), vec![63]),
+            (modifier_chord("Fn", &["Ctrl"]), vec![63, 59]),
+            (modifier_chord("Alt", &["Ctrl"]), vec![58, 59]),
+        ] {
+            config.behavior = HotkeyBehavior::TapToLock;
+            let mut tracker = KeyTracker::default();
+            tracker.update(&config, &keys(&down), Duration::ZERO);
+            assert!(
+                !tracker
+                    .update(&config, &keys(&down), Duration::from_secs(1))
+                    .down
+            );
+        }
     }
 
     #[test]

@@ -10,7 +10,12 @@ fn has_legacy_mac_hotkeys(settings: &AppSettings) -> bool {
             && hotkey.key == key
             && hotkey.behavior == HotkeyBehavior::Hold
     };
-    untouched(&settings.dictation_hotkey, "D") && untouched(&settings.scribe_hotkey, "S")
+    let right_modifier = |hotkey: &HotkeyConfig, key: &str| {
+        hotkey.modifiers.is_empty() && hotkey.key == key && hotkey.behavior == HotkeyBehavior::Hold
+    };
+    (untouched(&settings.dictation_hotkey, "D") && untouched(&settings.scribe_hotkey, "S"))
+        || (right_modifier(&settings.dictation_hotkey, "AltRight")
+            && right_modifier(&settings.scribe_hotkey, "MetaRight"))
 }
 
 fn generic_register() -> Register {
@@ -160,12 +165,12 @@ impl Default for AppSettings {
         let (dictation_hotkey, scribe_hotkey) = (
             HotkeyConfig {
                 modifiers: vec![],
-                key: "AltRight".into(),
+                key: "Fn".into(),
                 behavior: HotkeyBehavior::Hold,
             },
             HotkeyConfig {
-                modifiers: vec![],
-                key: "MetaRight".into(),
+                modifiers: vec!["Ctrl".into()],
+                key: "Fn".into(),
                 behavior: HotkeyBehavior::Hold,
             },
         );
@@ -485,13 +490,69 @@ mod tests {
         #[cfg(target_os = "macos")]
         {
             assert!(settings.normalize_hotkeys_for_platform());
-            assert_eq!(settings.dictation_hotkey.key, "AltRight");
-            assert_eq!(settings.scribe_hotkey.key, "MetaRight");
+            assert_eq!(settings.dictation_hotkey.key, "Fn");
+            assert_eq!(settings.scribe_hotkey.key, "Fn");
+            assert_eq!(settings.scribe_hotkey.modifiers, ["Ctrl"]);
             assert!(!settings.normalize_hotkeys_for_platform());
             assert!(!custom.normalize_hotkeys_for_platform());
         }
         #[cfg(not(target_os = "macos"))]
         assert!(!settings.normalize_hotkeys_for_platform());
+    }
+
+    #[test]
+    fn right_modifier_default_pair_migrates_but_custom_pairs_and_windows_do_not() {
+        let mut settings = AppSettings {
+            dictation_hotkey: HotkeyConfig {
+                modifiers: vec![],
+                key: "AltRight".into(),
+                behavior: HotkeyBehavior::Hold,
+            },
+            scribe_hotkey: HotkeyConfig {
+                modifiers: vec![],
+                key: "MetaRight".into(),
+                behavior: HotkeyBehavior::Hold,
+            },
+            ..AppSettings::default()
+        };
+        assert!(has_legacy_mac_hotkeys(&settings));
+        for (dictation, scribe) in [
+            ("Fn", "MetaRight"),
+            ("AltRight", "S"),
+            ("MetaRight", "AltRight"),
+        ] {
+            let mut custom = settings.clone();
+            custom.dictation_hotkey.key = dictation.into();
+            custom.scribe_hotkey.key = scribe.into();
+            let before = (
+                custom.dictation_hotkey.clone(),
+                custom.scribe_hotkey.clone(),
+            );
+            assert!(!custom.normalize_hotkeys_for_platform());
+            assert_eq!((custom.dictation_hotkey, custom.scribe_hotkey), before);
+        }
+        let mut custom = settings.clone();
+        custom.dictation_hotkey.modifiers.push("Ctrl".into());
+        assert!(!custom.normalize_hotkeys_for_platform());
+        let mut custom = settings.clone();
+        custom.scribe_hotkey.behavior = HotkeyBehavior::TapToLock;
+        assert!(!custom.normalize_hotkeys_for_platform());
+        #[cfg(target_os = "macos")]
+        {
+            assert!(settings.normalize_hotkeys_for_platform());
+            assert_eq!(settings.dictation_hotkey.key, "Fn");
+            assert_eq!(settings.scribe_hotkey.modifiers, ["Ctrl"]);
+            assert!(!settings.normalize_hotkeys_for_platform());
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert!(!settings.normalize_hotkeys_for_platform());
+            assert_eq!(AppSettings::default().dictation_hotkey.modifiers, ["Ctrl"]);
+            assert_eq!(
+                AppSettings::default().scribe_hotkey.modifiers,
+                ["Ctrl", "Shift"]
+            );
+        }
     }
 
     #[test]

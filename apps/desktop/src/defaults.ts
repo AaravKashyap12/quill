@@ -6,12 +6,12 @@ const mac = detectPlatform() === "mac";
 export const defaultSettings: AppSettings = {
   dictationHotkey: {
     modifiers: mac ? [] : ["Ctrl"],
-    key: mac ? "AltRight" : "Space",
+    key: mac ? "Fn" : "Space",
     behavior: "hold",
   },
   scribeHotkey: {
-    modifiers: mac ? [] : ["Ctrl", "Shift"],
-    key: mac ? "MetaRight" : "Space",
+    modifiers: mac ? ["Ctrl"] : ["Ctrl", "Shift"],
+    key: mac ? "Fn" : "Space",
     behavior: "hold",
   },
   audioInputDevice: null,
@@ -45,10 +45,11 @@ export const initialRuntimeStatus: RuntimeStatus = {
 export function formatHotkey(settings: AppSettings, mode: "dictation" | "scribe") {
   const hotkey = mode === "dictation" ? settings.dictationHotkey : settings.scribeHotkey;
   const macLabels: Record<string, string> = {
+    Fn: "Fn 🌐",
     AltRight: "Right Option ⌥",
     MetaRight: "Right Command ⌘",
     Meta: "⌘",
-    Ctrl: "⌃",
+    Ctrl: "Ctrl ⌃",
     Alt: "⌥",
     Shift: "⇧",
   };
@@ -57,7 +58,16 @@ export function formatHotkey(settings: AppSettings, mode: "dictation" | "scribe"
     .join(" + ");
 }
 
-export function isStandaloneMacHotkey(hotkey: HotkeyConfig): boolean {
-  return detectPlatform() === "mac" && hotkey.modifiers.length === 0
-    && (hotkey.key === "AltRight" || hotkey.key === "MetaRight");
+export function isModifierOnlyMacHotkey(hotkey: HotkeyConfig): boolean {
+  return detectPlatform() === "mac" && ["Fn", "Alt", "AltRight", "MetaRight"].includes(hotkey.key);
+}
+
+export function macShortcutPreset(mode: "dictation" | "scribe", preset: "apple-fn" | "no-fn"): HotkeyConfig {
+  return {
+    key: preset === "apple-fn" ? "Fn" : "Alt",
+    modifiers: preset === "apple-fn"
+      ? (mode === "dictation" ? [] : ["Ctrl"])
+      : (mode === "dictation" ? ["Ctrl"] : ["Meta", "Ctrl"]),
+    behavior: "hold",
+  };
 }
