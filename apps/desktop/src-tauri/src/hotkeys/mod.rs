@@ -13,12 +13,16 @@ pub struct HotkeyState {
 }
 
 #[cfg(target_os = "macos")]
-pub struct HotkeyMonitor;
+pub struct HotkeyMonitor {
+    last_down: (bool, bool),
+}
 
 #[cfg(target_os = "macos")]
 impl HotkeyMonitor {
     pub fn start() -> anyhow::Result<Self> {
-        Ok(Self)
+        Ok(Self {
+            last_down: (false, false),
+        })
     }
 
     pub fn drain_pair(
@@ -26,13 +30,29 @@ impl HotkeyMonitor {
         dictation: &crate::model::HotkeyConfig,
         scribe: &crate::model::HotkeyConfig,
     ) -> Vec<(HotkeyState, HotkeyState)> {
+        let dictation_sample = macos::sample(dictation);
+        let scribe_sample = macos::sample(scribe);
+        let down = (
+            dictation_sample.session.down(),
+            scribe_sample.session.down(),
+        );
+        if down != self.last_down {
+            tracing::info!(
+                dictation_session = ?dictation_sample.session,
+                dictation_hid = ?dictation_sample.hid,
+                scribe_session = ?scribe_sample.session,
+                scribe_hid = ?scribe_sample.hid,
+                "macOS shortcut state changed"
+            );
+            self.last_down = down;
+        }
         vec![(
             HotkeyState {
-                down: macos::is_pressed(dictation),
+                down: down.0,
                 pressed: false,
             },
             HotkeyState {
-                down: macos::is_pressed(scribe),
+                down: down.1,
                 pressed: false,
             },
         )]
