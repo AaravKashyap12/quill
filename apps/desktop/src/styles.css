@@ -1022,6 +1022,12 @@ button:disabled {
   font-weight: 650;
 }
 
+.onboarding-practice-status {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
 .onboarding-practice label span {
   color: var(--text-dim);
   font-size: 9px;

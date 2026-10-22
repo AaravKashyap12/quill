@@ -29,9 +29,11 @@ import type {
   AppSettings,
   CloudProvider,
   ProviderKeyStatus,
+  RuntimeStatus,
   SystemProfile,
 } from "../types";
 import { BrandMark } from "./BrandMark";
+import { OnboardingPractice } from "./OnboardingPractice";
 import type { SpeechSetupState } from "./FirstRunSetup";
 
 type SetupStep = "welcome" | "choices" | "speech" | "scribe" | "ready";
@@ -42,6 +44,7 @@ interface OnboardingProps {
   speech: SpeechSetupState;
   scribeReady: boolean;
   cloudStatuses: ProviderKeyStatus[];
+  runtime: RuntimeStatus;
   onChooseProviders: (
     speech: SetupSpeechRoute,
     scribe: SetupScribeRoute,
@@ -199,6 +202,7 @@ export function Onboarding({
   speech,
   scribeReady,
   cloudStatuses,
+  runtime,
   onChooseProviders,
   onStartSpeech,
   onRetrySpeech,
@@ -238,7 +242,10 @@ export function Onboarding({
   );
 
   useEffect(() => setStatuses(cloudStatuses), [cloudStatuses]);
-  useEffect(() => headingRef.current?.focus({ preventScroll: true }), [step]);
+  useEffect(() => {
+    // The final step focuses its practice field so dictation has an insertion target.
+    if (step !== "ready") headingRef.current?.focus({ preventScroll: true });
+  }, [step]);
 
   function updateStatus(next: ProviderKeyStatus) {
     setStatuses((current) => [
@@ -863,15 +870,7 @@ export function Onboarding({
                   <dd>{formatHotkey(settings, "scribe")}</dd>
                 </div>
               </dl>
-              <div className="onboarding-practice">
-                <label htmlFor="onboarding-practice">
-                  Try it here <span>Optional</span>
-                </label>
-                <textarea
-                  id="onboarding-practice"
-                  placeholder="Hold your Dictation shortcut and say a sentence…"
-                />
-              </div>
+              <OnboardingPractice hotkey={settings.dictationHotkey} runtime={runtime} />
               <button
                 className="primary-button onboarding-primary"
                 type="button"

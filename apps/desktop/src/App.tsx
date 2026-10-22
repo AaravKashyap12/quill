@@ -557,6 +557,7 @@ function SettingsApp() {
         speech={speechSetup}
         scribeReady={scribeReady}
         cloudStatuses={cloudStatuses}
+        runtime={runtime}
         onChooseProviders={chooseOnboardingProviders}
         onStartSpeech={startOnboardingSpeech}
         onRetrySpeech={() => void startSpeechDownload()}
