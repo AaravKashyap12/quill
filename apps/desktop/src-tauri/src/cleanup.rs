@@ -966,6 +966,7 @@ async fn clean_request_with_outcome(
         }
         Protocol::Gemini => {
             let key = crate::credentials::get_key(crate::credentials::CloudProvider::Gemini)
+                .await
                 .map_err(|error| anyhow!(error))?
                 .ok_or_else(|| {
                     anyhow!("Connect a Gemini API key in Voice settings before using Scribe.")

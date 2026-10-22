@@ -14,7 +14,7 @@ pub enum TranscriptionRuntime {
 }
 
 pub async fn transcribe_recovery_groq(settings: &AppSettings, samples: &[f32]) -> Result<String> {
-    let transcriber = groq::GroqTranscriber::new()?;
+    let transcriber = groq::GroqTranscriber::new().await?;
     let pass = transcriber
         .transcribe(settings, samples, "recovery")
         .await?;
@@ -26,7 +26,7 @@ pub async fn transcribe_recovery_gemini(
     samples: &[f32],
     mode: &str,
 ) -> Result<String> {
-    let transcriber = gemini::GeminiTranscriber::new()?;
+    let transcriber = gemini::GeminiTranscriber::new().await?;
     let pass = transcriber.transcribe(settings, samples, mode).await?;
     Ok(crate::dictionary::apply(&pass.text, &settings.dictionary))
 }
@@ -49,8 +49,10 @@ impl TranscriptionRuntime {
             TranscriptionProvider::Local => Ok(Self::Local(Box::new(
                 WhisperServer::start(app, settings).await?,
             ))),
-            TranscriptionProvider::Groq => Ok(Self::Groq(groq::GroqTranscriber::new()?)),
-            TranscriptionProvider::Gemini => Ok(Self::Gemini(gemini::GeminiTranscriber::new()?)),
+            TranscriptionProvider::Groq => Ok(Self::Groq(groq::GroqTranscriber::new().await?)),
+            TranscriptionProvider::Gemini => {
+                Ok(Self::Gemini(gemini::GeminiTranscriber::new().await?))
+            }
         }
     }
 

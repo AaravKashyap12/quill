@@ -59,7 +59,7 @@ fn entry(provider: CloudProvider) -> Result<keyring::Entry, String> {
 }
 
 #[cfg(any(windows, target_os = "macos"))]
-pub(crate) fn get_key(provider: CloudProvider) -> Result<Option<String>, String> {
+fn get_key_blocking(provider: CloudProvider) -> Result<Option<String>, String> {
     match entry(provider)?.get_password() {
         Ok(key) => Ok(Some(key)),
         Err(keyring::Error::NoEntry) => Ok(None),
@@ -71,47 +71,70 @@ pub(crate) fn get_key(provider: CloudProvider) -> Result<Option<String>, String>
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-pub(crate) fn get_key(_provider: CloudProvider) -> Result<Option<String>, String> {
+fn get_key_blocking(_provider: CloudProvider) -> Result<Option<String>, String> {
     Err("Secure API key storage is supported only on Windows and macOS.".to_owned())
 }
 
-#[tauri::command]
-pub fn set_provider_key(provider: CloudProvider, key: String) -> Result<ProviderKeyStatus, String> {
-    let key = key.trim();
-    if key.is_empty() {
-        return Err("Enter an API key before saving.".to_owned());
-    }
-    #[cfg(any(windows, target_os = "macos"))]
-    entry(provider)?.set_password(key).map_err(|_| {
-        "The API key could not be saved to the operating system credential store.".to_owned()
-    })?;
-    #[cfg(not(any(windows, target_os = "macos")))]
-    return Err("Secure API key storage is supported only on Windows and macOS.".to_owned());
+// Credential APIs can wait for an OS permission dialog. Keep those waits off
+// both the UI thread and async executor workers.
+async fn credential_operation<T: Send + 'static>(
+    operation: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(operation)
+        .await
+        .map_err(|_| "The operating system credential store task could not complete.".to_owned())?
+}
 
-    Ok(status(provider, true, "configured", None))
+pub(crate) async fn get_key(provider: CloudProvider) -> Result<Option<String>, String> {
+    credential_operation(move || get_key_blocking(provider)).await
 }
 
 #[tauri::command]
-pub fn delete_provider_key(provider: CloudProvider) -> Result<ProviderKeyStatus, String> {
-    #[cfg(any(windows, target_os = "macos"))]
-    match entry(provider)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => {}
-        Err(_) => {
-            return Err(
-                "The API key could not be removed from the operating system credential store."
-                    .to_owned(),
-            )
+pub async fn set_provider_key(
+    provider: CloudProvider,
+    key: String,
+) -> Result<ProviderKeyStatus, String> {
+    credential_operation(move || {
+        let key = key.trim();
+        if key.is_empty() {
+            return Err("Enter an API key before saving.".to_owned());
         }
-    }
-    #[cfg(not(any(windows, target_os = "macos")))]
-    return Err("Secure API key storage is supported only on Windows and macOS.".to_owned());
+        #[cfg(any(windows, target_os = "macos"))]
+        entry(provider)?.set_password(key).map_err(|_| {
+            "The API key could not be saved to the operating system credential store.".to_owned()
+        })?;
+        #[cfg(not(any(windows, target_os = "macos")))]
+        return Err("Secure API key storage is supported only on Windows and macOS.".to_owned());
 
-    Ok(status(provider, false, "missing", None))
+        Ok(status(provider, true, "configured", None))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn get_provider_key_status(provider: CloudProvider) -> Result<ProviderKeyStatus, String> {
-    let configured = get_key(provider)?.is_some();
+pub async fn delete_provider_key(provider: CloudProvider) -> Result<ProviderKeyStatus, String> {
+    credential_operation(move || {
+        #[cfg(any(windows, target_os = "macos"))]
+        match entry(provider)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(_) => {
+                return Err(
+                    "The API key could not be removed from the operating system credential store."
+                        .to_owned(),
+                )
+            }
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        return Err("Secure API key storage is supported only on Windows and macOS.".to_owned());
+
+        Ok(status(provider, false, "missing", None))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_provider_key_status(provider: CloudProvider) -> Result<ProviderKeyStatus, String> {
+    let configured = get_key(provider).await?.is_some();
     Ok(if configured {
         status(provider, true, "configured", None)
     } else {
@@ -123,7 +146,9 @@ pub fn get_provider_key_status(provider: CloudProvider) -> Result<ProviderKeySta
 pub async fn test_provider_connection(
     provider: CloudProvider,
 ) -> Result<ProviderKeyStatus, String> {
-    let key = get_key(provider)?.ok_or_else(|| "Save an API key first.".to_owned())?;
+    let key = get_key(provider)
+        .await?
+        .ok_or_else(|| "Save an API key first.".to_owned())?;
     let client = cloud_client()?;
     let request = match provider {
         CloudProvider::Groq => client.get(GROQ_STATUS_URL).bearer_auth(&key),
@@ -174,6 +199,44 @@ fn status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn credential_wait_does_not_block_the_async_executor() {
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let operation = credential_operation(move || {
+            entered_tx.send(()).unwrap();
+            // Model a modal OS-store wait, bounded so a regression cannot hang.
+            release_rx
+                .recv_timeout(Duration::from_secs(2))
+                .map_err(|_| "executor could not release credential wait".to_owned())?;
+            Ok("completed")
+        });
+        let responsive_task = async move {
+            entered_rx.await.unwrap();
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let _ = release_tx.send(());
+        };
+        let (result, ()) = tokio::join!(operation, responsive_task);
+        assert_eq!(result, Ok("completed"));
+    }
+
+    #[tokio::test]
+    async fn credential_operation_preserves_store_errors() {
+        let result =
+            credential_operation(|| Err::<(), _>("store unavailable fixture".to_owned())).await;
+        assert_eq!(result, Err("store unavailable fixture".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn blank_key_is_rejected_before_accessing_the_store() {
+        assert_eq!(
+            set_provider_key(CloudProvider::Groq, "  ".to_owned())
+                .await
+                .unwrap_err(),
+            "Enter an API key before saving."
+        );
+    }
 
     #[test]
     fn provider_accounts_are_separate() {

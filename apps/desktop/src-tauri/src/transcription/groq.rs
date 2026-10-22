@@ -62,8 +62,9 @@ struct GroqSegment {
 }
 
 impl GroqTranscriber {
-    pub fn new() -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         if get_key(CloudProvider::Groq)
+            .await
             .map_err(|error| anyhow!(error))?
             .is_none()
         {
@@ -112,6 +113,7 @@ impl GroqTranscriber {
         );
         ensure_upload_fits(wav.len())?;
         let key = get_key(CloudProvider::Groq)
+            .await
             .map_err(|error| anyhow!(error))?
             .ok_or_else(|| {
                 anyhow!("The saved Groq API key is missing. Reconnect it in Voice settings.")

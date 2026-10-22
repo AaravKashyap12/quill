@@ -36,8 +36,9 @@ struct UploadedFile {
 }
 
 impl GeminiTranscriber {
-    pub fn new() -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         if get_key(CloudProvider::Gemini)
+            .await
             .map_err(|error| anyhow!(error))?
             .is_none()
         {
@@ -72,6 +73,7 @@ impl GeminiTranscriber {
             ));
         }
         let key = get_key(CloudProvider::Gemini)
+            .await
             .map_err(|error| anyhow!(error))?
             .ok_or_else(|| {
                 anyhow!("The saved Gemini API key is missing. Reconnect it in Voice settings.")
