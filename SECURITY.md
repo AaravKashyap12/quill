@@ -31,13 +31,20 @@ the issue requires Accessibility permissions.
 - Groq and Gemini API keys are stored by Windows Credential Manager or macOS
   Keychain. They are not serialized into `settings.json`, returned to the
   frontend after saving, placed in URLs, logs, tracing fields, or metrics.
+  The native process caches read results per provider, including failures, so
+  concurrent status/runtime checks do not reopen Keychain prompts. Saved keys
+  remain ordinary strings in process memory until replacement, deletion, or
+  exit; secure erasure is not guaranteed. Only a deliberate connection retry
+  rereads a missing or inaccessible key. External vault edits require saving
+  again in Quill or restarting the app.
 - Provider error response bodies are never logged because they can echo audio
   transcripts or prompt content.
 - Cloud speech passes through local voice-activity detection before upload.
   Groq segment confidence metadata is used to reject low-confidence non-speech
   output without matching or logging transcript phrases.
-- Cleanup runs against a loopback-only LLM endpoint; the client rejects any
-  non-loopback host before sending a request.
+- Local cleanup runs against a loopback-only LLM endpoint; the client rejects
+  non-loopback hosts for that path. Explicitly selected Gemini cleanup uses
+  Google's cloud endpoint.
 - Cleanup output can rephrase and restructure the transcript (including
   fixing mishearings and self-corrections) but is prompted to preserve every
   specific fact — names, dates, numbers, URLs — and never invent commitments,
@@ -68,6 +75,11 @@ the issue requires Accessibility permissions.
   be cleared from Dictionary settings. Neither action sends the pair off-device.
 - Update artifacts must be signed before automatic update checks are enabled in
   production.
+- Registry speech models use pinned Hugging Face revisions and SHA-256 digests.
+  Downloads must match before installation; installed models must match the
+  pinned size and digest before sidecar startup. Unknown model IDs are refused.
+  This verifies artifact identity, not recognition accuracy or model safety;
+  see [model verification](docs/model-verification.md).
 - Quill does not install global keyboard hooks on Windows.
 - Recovery data is stored under the user-local application data directory and
   is deleted after a successful commit.

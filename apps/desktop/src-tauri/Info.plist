@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Quill needs microphone access to transcribe your speech locally. Your audio stays on this Mac.</string>
+  <string>Quill needs microphone access to transcribe your speech. Audio is processed on this Mac or sent to the cloud provider you select.</string>
 </dict>
 </plist>
