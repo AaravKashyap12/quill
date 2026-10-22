@@ -37,3 +37,4 @@ third_party/
 .github/skills/
 __pycache__/
 *.pyc
+apps/desktop/src-tauri/binaries/

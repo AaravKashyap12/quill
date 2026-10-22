@@ -33,6 +33,22 @@ UI changes should include desktop and mobile screenshots and must work by
 keyboard. Never check models, recordings, signing material, or generated
 installers into Git.
 
+## Local macOS bundle
+
+After building the sidecar with `bash scripts/build-whisper.sh metal`, build a
+local test app with a complete ad-hoc bundle signature:
+
+```bash
+pnpm macos:build:local
+```
+
+The script signs the bundled helper and app, verifies the complete bundle, and
+omits release updater artifacts. It needs no private updater key. Install this
+build before granting permissions; rebuilding changes its ad-hoc identity.
+Release builds still require updater signing and appropriate distribution
+signing. Exercise onboarding, recording, overlays, and insertion on hardware;
+the build alone does not prove those paths work.
+
 ## Commit and PR scope
 
 Prefer small, reviewable changes. Explain:

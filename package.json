@@ -15,6 +15,7 @@
     "build:desktop": "pnpm --filter @quill/desktop build",
     "tauri": "pnpm --filter @quill/desktop tauri",
     "tauri:build": "pnpm --filter @quill/desktop tauri build",
+    "macos:build:local": "bash scripts/build-macos-local.sh",
     "test": "pnpm test:prototype && pnpm --filter @quill/desktop test",
     "test:prototype": "node scripts/run-python-tests.mjs",
     "typecheck": "pnpm -r typecheck",
