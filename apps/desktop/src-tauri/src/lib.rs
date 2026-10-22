@@ -319,22 +319,35 @@ fn dismiss_voice_overlay(window: tauri::WebviewWindow) {
     }
 }
 
-/// Anchor a window to the bottom-centre of the primary monitor, with a
-/// small margin above the taskbar/dock. Called each time the overlay is
-/// shown so it follows resolution changes.
+/// Use the monitor's usable desktop so the Dock/taskbar cannot cover the pill.
+/// Resolve the screen on each activation rather than reusing an old position.
 pub(crate) fn position_overlay_bottom_center(window: &tauri::WebviewWindow) {
-    let Ok(Some(monitor)) = window.primary_monitor() else {
+    let monitor = window
+        .cursor_position()
+        .ok()
+        .and_then(|point| window.monitor_from_point(point.x, point.y).ok().flatten())
+        .or_else(|| window.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else {
         return;
     };
     let Ok(win) = window.outer_size() else {
         return;
     };
-    let screen = monitor.size();
-    let scale = monitor.scale_factor();
-    let margin = (46.0 * scale).round() as i32;
-    let x = ((screen.width as i32 - win.width as i32) / 2).max(0);
-    let y = (screen.height as i32 - win.height as i32 - margin).max(0);
-    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+    let position = overlay_position(monitor.work_area(), win, monitor.scale_factor());
+    let _ = window.set_position(position);
+}
+
+fn overlay_position(
+    area: &tauri::PhysicalRect<i32, u32>,
+    window: tauri::PhysicalSize<u32>,
+    scale: f64,
+) -> tauri::PhysicalPosition<i32> {
+    let margin = (16.0 * scale).round() as i64;
+    let x = i64::from(area.position.x)
+        + ((i64::from(area.size.width) - i64::from(window.width)) / 2).max(0);
+    let y = i64::from(area.position.y)
+        + (i64::from(area.size.height) - i64::from(window.height) - margin).max(0);
+    tauri::PhysicalPosition::new(x as i32, y as i32)
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -620,4 +633,33 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Quill");
+}
+
+#[cfg(test)]
+mod overlay_position_tests {
+    use super::*;
+
+    #[test]
+    fn overlay_stays_above_bottom_dock_on_retina_screen() {
+        let area = tauri::PhysicalRect {
+            position: tauri::PhysicalPosition::new(0, 50),
+            size: tauri::PhysicalSize::new(3024, 1770),
+        };
+        let window = tauri::PhysicalSize::new(960, 780);
+        let position = overlay_position(&area, window, 2.0);
+        assert_eq!(position, tauri::PhysicalPosition::new(1032, 1008));
+        assert_eq!(position.y + window.height as i32, 1820 - 32);
+    }
+
+    #[test]
+    fn overlay_preserves_negative_monitor_origin_and_side_dock_inset() {
+        let area = tauri::PhysicalRect {
+            position: tauri::PhysicalPosition::new(-1820, -40),
+            size: tauri::PhysicalSize::new(1820, 1040),
+        };
+        assert_eq!(
+            overlay_position(&area, tauri::PhysicalSize::new(480, 390), 1.0),
+            tauri::PhysicalPosition::new(-1150, 594),
+        );
+    }
 }
