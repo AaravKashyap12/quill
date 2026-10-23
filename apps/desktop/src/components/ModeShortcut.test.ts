@@ -54,6 +54,15 @@ describe("platform defaults", () => {
 });
 
 describe("Mac preset selection", () => {
+  it("keeps Tap selected when switching preset keys", () => {
+    platform("mac");
+    const settings = { ...defaultSettings, dictationHotkey: { ...macShortcutPreset("dictation", "apple-fn"), behavior: "tap-to-lock" as const } };
+    const onChange = vi.fn();
+    const select = MacShortcutPreset({ mode: "dictation", settings, onChange });
+    expect(select.props.value).toBe("apple-fn");
+    select.props.onChange({ target: { value: "no-fn" } } as ChangeEvent<HTMLSelectElement>);
+    expect(onChange).toHaveBeenLastCalledWith({ ...macShortcutPreset("dictation", "no-fn"), behavior: "tap-to-lock" });
+  });
   it.each(["dictation", "scribe"] as const)("selects %s presets without Fn keyboard events", (mode) => {
     platform("mac");
     const onChange = vi.fn();

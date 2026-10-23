@@ -299,22 +299,14 @@ async fn run(
             // A standalone modifier becoming a keyboard chord is cancellation,
             // never a normal release that would transcribe/upload its audio.
             // The monitor latches this while microphone/ASR startup is awaiting.
-            let (cancel_dictation, cancel_scribe) = hotkey_monitor.take_cancelled();
-            if cancel_dictation {
-                dictation_key.unlock();
-            }
-            if cancel_scribe {
-                scribe_key.unlock();
-            }
-            let cancel_active = active.as_ref().is_some_and(|session| match session.mode {
-                Mode::Dictation => cancel_dictation,
-                Mode::Scribe => cancel_scribe,
-            });
-            if cancel_active {
-                if let Some(session) = active.take() {
-                    session.cancel(&app);
-                }
-            }
+            cancel_sampled_session(
+                hotkey_monitor.take_cancelled(),
+                &mut dictation_key,
+                &mut scribe_key,
+                &mut active,
+                |session| session.mode,
+                |session| session.cancel(&app),
+            );
         }
         // The settings UI captures a new shortcut by listening for a keypress
         // in a focused button. Actually firing the mode in parallel would open
@@ -334,16 +326,12 @@ async fn run(
             let mut dictation_active = dictation_key.active(&settings.dictation_hotkey);
             let mut scribe_active = scribe_key.active(&settings.scribe_hotkey);
             for (dictation_state, scribe_state) in state_changes {
-                dictation_active =
-                    dictation_key.update(dictation_state, &settings.dictation_hotkey);
-                scribe_active = scribe_key.update(scribe_state, &settings.scribe_hotkey);
-                if dictation_key.just_pressed && dictation_active {
-                    scribe_key.unlock();
-                    scribe_active = false;
-                } else if scribe_key.just_pressed && scribe_active {
-                    dictation_key.unlock();
-                    dictation_active = false;
-                }
+                (dictation_active, scribe_active) = update_key_pair(
+                    &mut dictation_key,
+                    &mut scribe_key,
+                    (dictation_state, scribe_state),
+                    (&settings.dictation_hotkey, &settings.scribe_hotkey),
+                );
             }
             (dictation_active, scribe_active)
         };
@@ -428,6 +416,50 @@ fn attempt_session_start<T>(
             scribe_key.reject_start();
             report(&error);
             None
+        }
+    }
+}
+
+fn update_key_pair(
+    dictation: &mut KeyRuntime,
+    scribe: &mut KeyRuntime,
+    states: (hotkeys::HotkeyState, hotkeys::HotkeyState),
+    configs: (&HotkeyConfig, &HotkeyConfig),
+) -> (bool, bool) {
+    let mut d = dictation.update(states.0, configs.0);
+    let mut s = scribe.update(states.1, configs.1);
+    if dictation.just_pressed && d {
+        scribe.unlock();
+        s = false;
+    } else if scribe.just_pressed && s {
+        dictation.unlock();
+        d = false;
+    }
+    (d, s)
+}
+
+#[cfg(target_os = "macos")]
+fn cancel_sampled_session<T>(
+    cancelled: (bool, bool),
+    dictation: &mut KeyRuntime,
+    scribe: &mut KeyRuntime,
+    active: &mut Option<T>,
+    mode: impl FnOnce(&T) -> Mode,
+    cancel: impl FnOnce(T),
+) {
+    if cancelled.0 {
+        dictation.unlock();
+    }
+    if cancelled.1 {
+        scribe.unlock();
+    }
+    let matches = active.as_ref().is_some_and(|session| match mode(session) {
+        Mode::Dictation => cancelled.0,
+        Mode::Scribe => cancelled.1,
+    });
+    if matches {
+        if let Some(session) = active.take() {
+            cancel(session);
         }
     }
 }
@@ -1611,6 +1643,164 @@ mod tests {
             }
             assert!(!runtime.update(hotkeys::HotkeyState::default(), &config));
             assert!(runtime.update(down, &config));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_modifier_taps_start_and_stop_after_release_without_affecting_typing() {
+        let mut config = AppSettings::default().dictation_hotkey;
+        config.behavior = HotkeyBehavior::TapToLock;
+        let mut sampler = hotkeys::TestSampler::new(&config, &AppSettings::default().scribe_hotkey);
+        let mut runtime = KeyRuntime::default();
+        sampler.update(&[63], 0);
+        assert!(!runtime.update(sampler.drain().0, &config));
+        sampler.update(&[], 32);
+        assert!(runtime.update(sampler.drain().0, &config));
+        sampler.update(&[0], 64);
+        assert!(runtime.update(sampler.drain().0, &config));
+        sampler.update(&[63, 8], 80);
+        sampler.update(&[], 96);
+        assert!(runtime.update(sampler.drain().0, &config));
+        sampler.update(&[63], 112);
+        sampler.update(&[], 144);
+        assert!(!runtime.update(sampler.drain().0, &config));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn delayed_cross_mode_taps_match_immediate_consumption() {
+        let mut d = AppSettings::default().dictation_hotkey;
+        let mut s = AppSettings::default().scribe_hotkey;
+        d.behavior = HotkeyBehavior::TapToLock;
+        s.behavior = HotkeyBehavior::TapToLock;
+        for initial in 0..4 {
+            for length in 1..=6 {
+                for sequence in 0..(1 << length) {
+                    let mut immediate = hotkeys::TestSampler::new(&d, &s);
+                    let mut delayed = hotkeys::TestSampler::new(&d, &s);
+                    let make_keys = || {
+                        (
+                            KeyRuntime {
+                                locked: initial & 1 != 0,
+                                ..Default::default()
+                            },
+                            KeyRuntime {
+                                locked: initial & 2 != 0,
+                                ..Default::default()
+                            },
+                        )
+                    };
+                    let mut expected = make_keys();
+                    let mut actual = make_keys();
+                    for tap in 0..length {
+                        let keys: &[u16] = if sequence & (1 << tap) == 0 {
+                            &[63]
+                        } else {
+                            &[59, 63]
+                        };
+                        for (offset, keys) in [(0, keys), (16, &[][..])] {
+                            let time = (tap * 32 + offset) as u64;
+                            immediate.update(keys, time);
+                            delayed.update(keys, time);
+                            for pair in immediate.drain_pairs() {
+                                update_key_pair(&mut expected.0, &mut expected.1, pair, (&d, &s));
+                            }
+                        }
+                    }
+                    for pair in delayed.drain_pairs() {
+                        update_key_pair(&mut actual.0, &mut actual.1, pair, (&d, &s));
+                    }
+                    assert_eq!(
+                        (actual.0.locked, actual.1.locked),
+                        (expected.0.locked, expected.1.locked),
+                        "initial={initial}, length={length}, sequence={sequence:b}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn release_frame_conflict_cannot_start_or_stop_a_locked_consumer() {
+        let mut d = AppSettings::default().dictation_hotkey;
+        d.behavior = HotkeyBehavior::TapToLock;
+        let s = AppSettings::default().scribe_hotkey;
+        for locked in [false, true] {
+            for (flags, other) in [(0, vec![8]), (1, vec![])] {
+                let mut sampler = hotkeys::TestSampler::new(&d, &s);
+                let mut runtime = KeyRuntime {
+                    locked,
+                    ..Default::default()
+                };
+                sampler.sample_physical(0, &[63], 0);
+                sampler.sample_physical(flags, &other, 16);
+                for pair in sampler.drain_pairs() {
+                    assert_eq!(runtime.update(pair.0, &d), locked);
+                    assert!(!runtime.just_pressed);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn changed_tap_binding_discards_locked_session_before_normal_finish() {
+        for mode in [Mode::Dictation, Mode::Scribe] {
+            let mut d = AppSettings::default().dictation_hotkey;
+            let mut s = AppSettings::default().scribe_hotkey;
+            d.behavior = HotkeyBehavior::TapToLock;
+            s.behavior = HotkeyBehavior::TapToLock;
+            let mut sampler = hotkeys::TestSampler::new(&d, &s);
+            let mut dk = KeyRuntime::default();
+            let mut sk = KeyRuntime::default();
+            sampler.update(
+                if mode == Mode::Dictation {
+                    &[63]
+                } else {
+                    &[59, 63]
+                },
+                0,
+            );
+            sampler.update(&[], 16);
+            for pair in sampler.drain_pairs() {
+                update_key_pair(&mut dk, &mut sk, pair, (&d, &s));
+            }
+            assert_eq!(
+                (dk.locked, sk.locked),
+                (mode == Mode::Dictation, mode == Mode::Scribe)
+            );
+            let control = Arc::new(SessionControl::default());
+            let mut active = Some((mode, control.try_start_session().unwrap()));
+            if mode == Mode::Dictation {
+                d.behavior = HotkeyBehavior::Hold;
+            } else {
+                s.behavior = HotkeyBehavior::Hold;
+            }
+            sampler.configure(&d, &s);
+            let mut cancelled = 0;
+            let mut finished = 0;
+            cancel_sampled_session(
+                sampler.cancelled(),
+                &mut dk,
+                &mut sk,
+                &mut active,
+                |session| session.0,
+                |session| {
+                    cancelled += 1;
+                    drop(session);
+                },
+            );
+            // This is the same ownership gate used by normal release finalization.
+            if let Some(session) = active.take() {
+                finished += 1;
+                drop(session);
+            }
+            assert_eq!((cancelled, finished), (1, 0));
+            assert!(!dk.locked && !sk.locked);
+            assert!(!control.state.lock().unwrap().session_active);
+            assert!(control.try_start_session().is_some());
         }
     }
 

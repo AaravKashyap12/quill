@@ -1,0 +1,27 @@
+Review the new Mac Tap activation changes against 5e574c1, read-only.
+
+User goal: the app currently disables Tap for Fn Dictation and Ctrl+Fn Scribe;
+make both available and functional, including modifier-only backup shortcuts.
+One complete exclusive tap starts recording, the next stops it. Conflicting
+chords must not become start/stop events or upload a recording. Preserve Hold,
+mode precedence, bounded sampling, delayed-event retention, cancellation, custom
+bindings, Windows behavior and the user's behavior choice when changing presets.
+
+Acceptance: UI allows Tap independently per mode; native producer and real
+KeyRuntime cooperate; either press/release order works for Ctrl+Fn; regular
+typing during a locked recording does not stop it; shortcut configuration changes
+cannot leave a hidden locked session; no dependencies or permission-flow changes.
+
+Use target/astack-guidance/instructions.md and Ponytail review/boundary/test-quality
+references. Inspect git diff 5e574c1 and connected consumers. Do not edit code,
+run builds/tests, interact with desktop apps, access user data or spawn delegates.
+Write concrete findings to target/macos-evidence/mac-tap/tier2-review.md and return
+them with unverified boundaries. Root owns fixes and native verification.
+
+This is the first independent review of the newly requested Tap scope. The prior
+insertion task's exact original brief is docs/verification/restart-insertion-review-brief.txt;
+its findings were delayed same-window retargeting and missing startup-boundary
+coverage. Both were addressed before commit 5e574c1, with fresh-press-only capture
+after initialization and injected startup-failure regressions. Responses and
+limits are in docs/verification/restart-insertion.md; no objection is left open.
+Do not repeat that review or the closed Gemini/permission investigations.

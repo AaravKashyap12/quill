@@ -64,7 +64,11 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
         <div className="settings-group">
           <SettingRow
             label="Dictation activation"
-            description={isModifierOnlyMacHotkey(settings.dictationHotkey)
+            description={settings.dictationHotkey.behavior === "tap-to-lock"
+              ? isModifierOnlyMacHotkey(settings.dictationHotkey)
+                ? "Tap and release the shortcut to start. Tap again to stop and insert."
+                : "Tap once to start. Tap again to stop and insert."
+              : isModifierOnlyMacHotkey(settings.dictationHotkey)
               ? "Hold only the shortcut keys for 250 ms to start. Release to insert; other keys cancel."
               : "Hold the shortcut, or tap once to start and again to stop."}
           >
@@ -75,7 +79,6 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
                   type="button"
                   className={settings.dictationHotkey.behavior === behavior ? "is-active" : ""}
                   aria-pressed={settings.dictationHotkey.behavior === behavior}
-                  disabled={behavior === "tap-to-lock" && isModifierOnlyMacHotkey(settings.dictationHotkey)}
                   onClick={() =>
                     onHotkey("dictation", { ...settings.dictationHotkey, behavior })
                   }
@@ -87,7 +90,11 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
           </SettingRow>
           <SettingRow
             label="Scribe activation"
-            description={isModifierOnlyMacHotkey(settings.scribeHotkey)
+            description={settings.scribeHotkey.behavior === "tap-to-lock"
+              ? isModifierOnlyMacHotkey(settings.scribeHotkey)
+                ? "Tap and release the shortcut to start. Tap again to stop and review."
+                : "Tap once to start. Tap again to stop and review."
+              : isModifierOnlyMacHotkey(settings.scribeHotkey)
               ? "Hold only the shortcut keys for 250 ms to start. Release to review; other keys cancel."
               : "Configure Scribe independently from Dictation."}
           >
@@ -98,7 +105,6 @@ export function GeneralView({ settings, update, onHotkey, onPreview }: GeneralVi
                   type="button"
                   className={settings.scribeHotkey.behavior === behavior ? "is-active" : ""}
                   aria-pressed={settings.scribeHotkey.behavior === behavior}
-                  disabled={behavior === "tap-to-lock" && isModifierOnlyMacHotkey(settings.scribeHotkey)}
                   onClick={() =>
                     onHotkey("scribe", { ...settings.scribeHotkey, behavior })
                   }

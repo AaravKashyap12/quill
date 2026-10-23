@@ -105,7 +105,7 @@ export function MacShortcutPreset({ mode, settings, onChange }: Pick<ModeShortcu
   const presets = ["apple-fn", "no-fn"] as const;
   const selected = presets.find((preset) => {
     const hotkey = macShortcutPreset(mode, preset);
-    return hotkey.key === current.key && hotkey.behavior === current.behavior
+    return hotkey.key === current.key
       && hotkey.modifiers.length === current.modifiers.length
       && hotkey.modifiers.every((modifier) => current.modifiers.includes(modifier));
   }) ?? "custom";
@@ -115,7 +115,7 @@ export function MacShortcutPreset({ mode, settings, onChange }: Pick<ModeShortcu
       value={selected}
       onChange={(event) => {
         const preset = event.target.value;
-        if (preset === "apple-fn" || preset === "no-fn") onChange(macShortcutPreset(mode, preset));
+        if (preset === "apple-fn" || preset === "no-fn") onChange({ ...macShortcutPreset(mode, preset), behavior: current.behavior });
       }}
     >
       <option value="custom" disabled>Custom shortcut</option>
@@ -197,7 +197,8 @@ export function ModeShortcut({
     if (!next) return;
     event.preventDefault();
     event.stopPropagation();
-    onChange(next);
+    const current = mode === "dictation" ? settings.dictationHotkey : settings.scribeHotkey;
+    onChange({ ...next, behavior: current.behavior });
     setRejection(null);
     setRecording(false);
   }
