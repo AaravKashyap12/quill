@@ -47,8 +47,9 @@ pnpm macos:build:local
 The script signs the bundled helper and app, verifies the complete bundle, and
 omits release updater artifacts. It needs no private updater key. Install this
 build before granting permissions; rebuilding changes its ad-hoc identity.
-Release builds still require updater signing and appropriate distribution
-signing. Exercise onboarding, recording, overlays, and insertion on hardware;
+Release updates require Tauri updater signing. Trusted platform distribution
+also needs publisher signing and, on macOS, notarization; those are separate
+from updater signatures. Exercise onboarding, recording, overlays, and insertion on hardware;
 the build alone does not prove those paths work.
 
 ## Commit and PR scope
@@ -59,3 +60,24 @@ Prefer small, reviewable changes. Explain:
 - which platform(s) were exercised;
 - privacy/network implications;
 - how failure falls back safely.
+
+## Maintainer release workflow
+
+For maintainer requests to “fix, commit, and push Quill,” include a new patch
+release unless the request explicitly says otherwise. Keep implementation
+commits focused, finish the applicable native checks, and require green CI for
+the source revision before publishing. A source push alone is not completion
+of that request.
+
+Use **Publish app update** (`.github/workflows/app-update.yml`) with the next
+unused patch version. It verifies source CI, updates all five version files in
+a separate commit, and builds/publishes the Windows and universal macOS assets.
+Do not create a competing local version bump. Check both platform jobs, release
+notes, installer assets, updater signatures, and `latest.json` after publication.
+Synchronize the local branch with the workflow's version commit using a
+fast-forward only.
+
+Tauri updater signatures authenticate update artifacts; they do not provide
+Windows publisher trust or Apple Developer ID notarization. Describe the actual
+signing status and tested platform coverage in release notes. Publishing an
+artifact does not establish additional hardware or editor support.

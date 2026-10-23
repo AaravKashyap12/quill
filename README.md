@@ -3,7 +3,7 @@
 **Two hotkeys. Two kinds of voice input. Local by default, cloud only when you choose it.**
 
 Quill is a free, open-source voice dictation app for Windows. macOS has native
-platform hooks and a packaged whisper.cpp Metal sidecar. Unreleased repairs
+platform hooks and a packaged whisper.cpp Metal sidecar. Recent repairs
 have passed physical Dictation, Scribe, and full-screen overlay checks on Apple
 Silicon; the broader application matrix remains under verification. Published
 macOS builds remain unsupported; see the [verification record](docs/macos-verification.md)
@@ -272,15 +272,18 @@ after each bundle identity change.
 
 ## Signing, notarization, and updater keys
 
-Before creating a public release:
+The release workflow requires a Tauri updater public key in `tauri.conf.json`
+and its private key/password in GitHub Actions secrets. Those updater keys are
+separate from operating-system publisher certificates.
 
-- Generate a Tauri updater signing key and replace
-  `REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY` in `tauri.conf.json`.
-- Add the private updater key/password as GitHub Actions secrets.
-- Add the Windows code-signing certificate configuration.
-- Add Apple Developer ID, Team ID, certificate, and notarization credentials.
+Current release automation does not configure Windows publisher signing or
+Apple Developer ID signing/notarization. Downloads can therefore show OS trust
+warnings even when their updater signatures verify. Trusted distribution would
+require those additional certificates and credentials.
 
-The release workflow is intentionally manual until those secrets are present.
+Use the manual **Publish app update** workflow after source CI passes; see the
+[maintainer release workflow](CONTRIBUTING.md#maintainer-release-workflow).
+
 Updates are offered to the user; Quill never installs one silently during a
 recording session.
 
