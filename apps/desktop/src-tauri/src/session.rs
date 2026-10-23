@@ -375,18 +375,20 @@ async fn run(
                 }
             }
             if let Some(mode) = desired_mode {
-                if let Some(activity) = control.try_start_session() {
-                    active = Some(ActiveSession::start(
-                        mode,
-                        settings.clone(),
-                        &app,
-                        carried_target,
-                        activity,
-                    )?);
-                } else {
-                    dictation_key.unlock();
-                    scribe_key.unlock();
-                }
+                active = attempt_session_start(
+                    &control,
+                    &mut dictation_key,
+                    &mut scribe_key,
+                    |activity| {
+                        ActiveSession::start(mode, settings.clone(), &app, carried_target, activity)
+                    },
+                    |error| {
+                        tracing::warn!(%error, "could not start speech session");
+                        show_overlay(&app, mode, true);
+                        emit_voice_pill(&app, "error", Some(mode), Some(&error.to_string()), None);
+                        emit_status(&app, "error", Some(mode), &error.to_string(), None);
+                    },
+                );
             }
         }
 
@@ -405,11 +407,37 @@ async fn run(
     }
 }
 
+// A target/audio startup failure is local to this attempt. Keep the engine and
+// sampler alive, release activity via RAII, and require a new shortcut press.
+fn attempt_session_start<T>(
+    control: &Arc<SessionControl>,
+    dictation_key: &mut KeyRuntime,
+    scribe_key: &mut KeyRuntime,
+    start: impl FnOnce(SessionActivity) -> Result<T>,
+    report: impl FnOnce(&anyhow::Error),
+) -> Option<T> {
+    let Some(activity) = control.try_start_session() else {
+        dictation_key.unlock();
+        scribe_key.unlock();
+        return None;
+    };
+    match start(activity) {
+        Ok(session) => Some(session),
+        Err(error) => {
+            dictation_key.reject_start();
+            scribe_key.reject_start();
+            report(&error);
+            None
+        }
+    }
+}
+
 #[derive(Default)]
 struct KeyRuntime {
     was_down: bool,
     locked: bool,
     just_pressed: bool,
+    failed_hold: bool,
 }
 
 impl KeyRuntime {
@@ -418,6 +446,11 @@ impl KeyRuntime {
         // existing physical-edge / short-tap fallback.
         let presses = state.press_count(self.was_down);
         self.was_down = state.down;
+        if self.failed_hold && state.down && presses == 0 {
+            self.just_pressed = false;
+            return false;
+        }
+        self.failed_hold = false;
         self.just_pressed = presses > 0;
         match config.behavior {
             HotkeyBehavior::Hold => state.down,
@@ -435,10 +468,19 @@ impl KeyRuntime {
     }
 
     fn active(&self, config: &HotkeyConfig) -> bool {
+        if self.failed_hold {
+            return false;
+        }
         match config.behavior {
             HotkeyBehavior::Hold => self.was_down,
             HotkeyBehavior::TapToLock => self.locked,
         }
+    }
+
+    fn reject_start(&mut self) {
+        self.unlock();
+        self.failed_hold = self.was_down;
+        self.just_pressed = false;
     }
 }
 
@@ -1508,6 +1550,92 @@ fn hide_overlay(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_and_audio_start_failures_leave_the_engine_available_for_a_fresh_press() {
+        for failure in ["capture failed", "audio open failed"] {
+            let control = Arc::new(SessionControl::default());
+            let mut dictation = KeyRuntime::default();
+            let mut scribe = KeyRuntime::default();
+            let config = AppSettings::default().dictation_hotkey;
+            let down = hotkeys::HotkeyState {
+                down: true,
+                ..Default::default()
+            };
+            assert!(dictation.update(down, &config));
+            let mut reported = Vec::new();
+            let result: Option<SessionActivity> = attempt_session_start(
+                &control,
+                &mut dictation,
+                &mut scribe,
+                |_activity| Err(anyhow!(failure)),
+                |error| reported.push(error.to_string()),
+            );
+            assert!(result.is_none());
+            assert_eq!(reported, [failure]);
+            assert!(!control.state.lock().unwrap().session_active);
+            assert!(!control.stop_requested());
+            for _ in 0..10 {
+                assert!(!dictation.update(down, &config));
+                assert!(!dictation.active(&config));
+            }
+            dictation.update(hotkeys::HotkeyState::default(), &config);
+            assert!(dictation.update(down, &config));
+            let result = attempt_session_start(&control, &mut dictation, &mut scribe, Ok, |_| {
+                panic!("a successful restart must not report failure")
+            });
+            assert!(result.is_some());
+            assert!(control.state.lock().unwrap().session_active);
+            drop(result);
+            assert!(!control.state.lock().unwrap().session_active);
+        }
+    }
+
+    #[test]
+    fn failed_start_does_not_retry_until_a_new_press() {
+        for behavior in [HotkeyBehavior::Hold, HotkeyBehavior::TapToLock] {
+            let config = HotkeyConfig {
+                behavior,
+                ..AppSettings::default().dictation_hotkey
+            };
+            let mut runtime = KeyRuntime::default();
+            let down = hotkeys::HotkeyState {
+                down: true,
+                ..Default::default()
+            };
+            assert!(runtime.update(down, &config));
+            runtime.reject_start();
+            for _ in 0..10 {
+                assert!(!runtime.update(down, &config));
+                assert!(!runtime.active(&config));
+            }
+            assert!(!runtime.update(hotkeys::HotkeyState::default(), &config));
+            assert!(runtime.update(down, &config));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn failed_start_accepts_a_fresh_sampled_press_after_a_consumer_stall() {
+        let config = AppSettings::default().dictation_hotkey;
+        let mut runtime = KeyRuntime::default();
+        let down = hotkeys::HotkeyState {
+            down: true,
+            pressed: true,
+            sampled_presses: Some(1),
+        };
+        assert!(runtime.update(down, &config));
+        runtime.reject_start();
+        assert!(!runtime.update(
+            hotkeys::HotkeyState {
+                sampled_presses: Some(0),
+                ..down
+            },
+            &config
+        ));
+        // Release and next down were both sampled while the consumer was busy.
+        assert!(runtime.update(down, &config));
+    }
 
     #[test]
     fn failed_insertion_retries_are_bounded_and_only_changed_errors_are_reported() {
