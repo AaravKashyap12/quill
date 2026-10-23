@@ -94,16 +94,11 @@ pub fn capture_target() -> Result<InsertionTarget> {
             "macOS reported an invalid process identifier for the frontmost application"
         ));
     }
-    let focus = focused_editor(process_id)?;
-    let role = unsafe { copy_string_attribute(focus.editor.0, "AXRole") }.unwrap_or_default();
-    let subrole = unsafe { copy_string_attribute(focus.editor.0, "AXSubrole") }.unwrap_or_default();
-    if !matches!(role.as_str(), "AXTextField" | "AXTextArea" | "AXComboBox")
-        || subrole.contains("Secure")
-    {
-        return Err(anyhow!(
-            "Focus an accessible, non-password text field before starting Quill."
-        ));
-    }
+    let ax = unsafe { AxElement::from_owned(AXUIElementCreateApplication(process_id)) }?;
+    let focus = discover_editor(&mut NativeDiscovery {
+        application: &application,
+        ax,
+    })?;
     if !application.isActive() {
         return Err(anyhow!(
             "The focused application changed. Focus your text field and try again."
@@ -302,8 +297,24 @@ impl AxElement {
     }
 
     fn element_attribute(&self, name: &str) -> Result<Self> {
-        let value = unsafe { copy_attribute(self.0, name) }
-            .ok_or_else(|| anyhow!("macOS could not identify the original window or text field. Enable Accessibility for Quill and focus an editable field before trying again."))?;
+        self.optional_element_attribute(name)?.ok_or_else(|| anyhow!("The application did not expose {name} (AX error -25212). Focus an editable field and try again."))
+    }
+
+    fn optional_element_attribute(&self, name: &str) -> Result<Option<Self>> {
+        let attribute = CFString::new(name);
+        let mut value: CFTypeRef = std::ptr::null();
+        let status = unsafe {
+            AXUIElementCopyAttributeValue(self.0, attribute.as_concrete_TypeRef(), &mut value)
+        };
+        if status != AX_ERROR_SUCCESS || value.is_null() {
+            if !value.is_null() {
+                unsafe { CFRelease(value) };
+            }
+            if status == -25212 {
+                return Ok(None);
+            }
+            return Err(anyhow!("The application did not expose the focused window or text field ({name}, AX error {status}). Focus an editable field and try again."));
+        }
         unsafe {
             if CFGetTypeID(value) != AXUIElementGetTypeID() {
                 CFRelease(value);
@@ -311,7 +322,7 @@ impl AxElement {
                     "The application did not expose an accessible text field."
                 ));
             }
-            Self::from_owned(value as AXUIElementRef)
+            Self::from_owned(value as AXUIElementRef).map(Some)
         }
     }
 }
@@ -320,6 +331,123 @@ impl AxElement {
 struct EditorFocus<E> {
     window: E,
     editor: E,
+}
+
+trait EditorDiscovery<E> {
+    fn active(&self) -> bool;
+    fn window(&mut self) -> Result<E>;
+    fn editor(&mut self, window: &E) -> Result<Option<E>>;
+    fn enable(&mut self);
+    fn wait(&mut self);
+}
+
+fn discover_editor<E: Eq>(operations: &mut impl EditorDiscovery<E>) -> Result<EditorFocus<E>> {
+    let changed = || {
+        anyhow!("The focused application or window changed. Focus your text field and try again.")
+    };
+    if !operations.active() {
+        return Err(changed());
+    }
+    let window = operations.window()?;
+    if let Some(editor) = operations.editor(&window)? {
+        return Ok(EditorFocus { window, editor });
+    }
+    operations.enable();
+    // Chrome debounces EnhancedUserInterface by two seconds. Never re-enable
+    // inside the poll: that would keep postponing its initialization.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    for _ in 0..60 {
+        if !operations.active() || operations.window()? != window {
+            return Err(changed());
+        }
+        // No trustworthy field was captured at activation. Preparation
+        // may expose a different field, so only a fresh press can bind it.
+        if matches!(operations.editor(&window), Ok(Some(_))) {
+            return Err(anyhow!("Editor is ready — press your shortcut again."));
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        operations.wait();
+    }
+    Err(anyhow!("The application has not exposed its focused text field. Focus an editable field and press your shortcut again."))
+}
+
+struct NativeDiscovery<'a> {
+    application: &'a NSRunningApplication,
+    ax: AxElement,
+}
+
+impl EditorDiscovery<AxElement> for NativeDiscovery<'_> {
+    fn active(&self) -> bool {
+        self.application.isActive()
+    }
+
+    fn window(&mut self) -> Result<AxElement> {
+        self.ax.element_attribute("AXFocusedWindow")
+    }
+
+    fn editor(&mut self, window: &AxElement) -> Result<Option<AxElement>> {
+        let Some(editor) = self.ax.optional_element_attribute("AXFocusedUIElement")? else {
+            return Ok(None);
+        };
+        if editor.element_attribute("AXWindow")? != *window {
+            return Err(anyhow!(
+                "The focused editor changed. Focus your text field and try again."
+            ));
+        }
+        let role = unsafe { copy_string_attribute(editor.0, "AXRole") }.unwrap_or_default();
+        let subrole = unsafe { copy_string_attribute(editor.0, "AXSubrole") }.unwrap_or_default();
+        if !editable_role(&role, &subrole) {
+            return Err(anyhow!(
+                "Focus an accessible, non-password text field before starting Quill."
+            ));
+        }
+        Ok(Some(editor))
+    }
+
+    fn enable(&mut self) {
+        // Reading the application role initializes Chromium's native AX support.
+        let _ = unsafe { copy_string_attribute(self.ax.0, "AXRole") };
+        let manual = CFString::new("AXManualAccessibility");
+        let enabled = CFBoolean::true_value();
+        let manual_result = unsafe {
+            AXUIElementSetAttributeValue(
+                self.ax.0,
+                manual.as_concrete_TypeRef(),
+                enabled.as_CFTypeRef(),
+            )
+        };
+        // Electron exposes ManualAccessibility; Chrome uses EnhancedUserInterface.
+        let enhanced_result = if manual_result != AX_ERROR_SUCCESS {
+            let enhanced = CFString::new("AXEnhancedUserInterface");
+            Some(unsafe {
+                AXUIElementSetAttributeValue(
+                    self.ax.0,
+                    enhanced.as_concrete_TypeRef(),
+                    enabled.as_CFTypeRef(),
+                )
+            })
+        } else {
+            None
+        };
+        // Chrome can return NotImplemented after handling EnhancedUserInterface;
+        // only successful focused-field readback establishes readiness.
+        tracing::info!(
+            process_id = self.application.processIdentifier(),
+            manual_result,
+            ?enhanced_result,
+            "requested editor accessibility initialization"
+        );
+    }
+
+    fn wait(&mut self) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn editable_role(role: &str, subrole: &str) -> bool {
+    matches!(role, "AXTextField" | "AXTextArea" | "AXComboBox") && !subrole.contains("Secure")
 }
 
 fn focused_editor(process_id: i32) -> Result<EditorFocus<AxElement>> {
@@ -476,6 +604,128 @@ pub fn paste() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ColdEditor {
+        enabled: usize,
+        waits: usize,
+        ready_after: usize,
+        active: bool,
+        changed_window: bool,
+        acceptable: bool,
+    }
+
+    impl ColdEditor {
+        fn new() -> Self {
+            Self {
+                enabled: 0,
+                waits: 0,
+                ready_after: 2,
+                active: true,
+                changed_window: false,
+                acceptable: true,
+            }
+        }
+    }
+
+    impl EditorDiscovery<u8> for ColdEditor {
+        fn active(&self) -> bool {
+            self.active
+        }
+        fn window(&mut self) -> Result<u8> {
+            Ok(if self.enabled > 0 && self.changed_window {
+                2
+            } else {
+                1
+            })
+        }
+        fn editor(&mut self, _: &u8) -> Result<Option<u8>> {
+            if !self.acceptable {
+                return if self.enabled == 0 {
+                    Err(anyhow!("field A metadata invalid or noneditable"))
+                } else {
+                    Ok(Some(20)) // Field B in the same window after initialization.
+                };
+            }
+            if self.ready_after == 0 || self.enabled > 0 && self.waits >= self.ready_after {
+                Ok(Some(10))
+            } else {
+                Ok(None)
+            }
+        }
+        fn enable(&mut self) {
+            self.enabled += 1;
+        }
+        fn wait(&mut self) {
+            self.waits += 1;
+        }
+    }
+
+    #[test]
+    fn cold_editor_prepares_once_but_requires_a_fresh_capture() {
+        let mut app = ColdEditor::new();
+        assert!(discover_editor(&mut app)
+            .unwrap_err()
+            .to_string()
+            .contains("Editor is ready"));
+        assert_eq!(app.enabled, 1);
+        assert_eq!(app.waits, 2);
+        assert_eq!(
+            discover_editor(&mut app).unwrap(),
+            EditorFocus {
+                window: 1,
+                editor: 10
+            }
+        );
+        assert_eq!(app.enabled, 1);
+        assert_eq!(app.waits, 2);
+    }
+
+    #[test]
+    fn warm_editor_needs_no_initialization_or_wait() {
+        let mut app = ColdEditor::new();
+        app.ready_after = 0;
+        assert!(discover_editor(&mut app).is_ok());
+        assert_eq!((app.enabled, app.waits), (0, 0));
+    }
+
+    #[test]
+    fn discovery_never_captures_a_changed_window_or_background_app() {
+        for changed_window in [false, true] {
+            let mut app = ColdEditor::new();
+            app.changed_window = changed_window;
+            app.active = changed_window;
+            assert!(discover_editor(&mut app).is_err());
+            assert_eq!(app.waits, 0);
+        }
+    }
+
+    #[test]
+    fn unavailable_editor_has_bounded_discovery() {
+        let mut app = ColdEditor::new();
+        app.ready_after = usize::MAX;
+        assert!(discover_editor(&mut app).is_err());
+        assert_eq!(app.enabled, 1);
+        assert!(app.waits <= 60);
+    }
+
+    #[test]
+    fn known_invalid_field_never_waits_to_accept_a_different_field() {
+        let mut app = ColdEditor::new();
+        app.acceptable = false;
+        assert!(discover_editor(&mut app).is_err());
+        assert_eq!((app.enabled, app.waits), (0, 0));
+    }
+
+    #[test]
+    fn discovery_accepts_editors_but_never_passwords_or_web_areas() {
+        for role in ["AXTextField", "AXTextArea", "AXComboBox"] {
+            assert!(editable_role(role, ""));
+            assert!(!editable_role(role, "AXSecureTextField"));
+        }
+        for role in ["AXWebArea", "AXGroup", "AXButton", ""] {
+            assert!(!editable_role(role, ""));
+        }
+    }
 
     struct FakeFocus {
         current: EditorFocus<u32>,
