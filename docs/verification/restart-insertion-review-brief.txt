@@ -1,0 +1,22 @@
+Review the uncommitted macOS insertion repair against bccde982bf479e3c9b3e1ae425ef4bb5b5db1991.
+
+Goal: after launching Quill and target apps following a Mac restart, Dictation and
+Scribe must discover the focused editor in T3, Chrome and ordinary native apps.
+Keep automatic insertion pinned to the exact original window and editable field.
+Never accept password fields or fall back to pasting into an arbitrary process.
+When capture/startup fails, report the error and keep the session engine alive;
+one held shortcut must not trigger repeated startup attempts.
+
+Acceptance: bounded discovery, app/window changes rejected, existing warm editors
+remain fast, failed starts release session activity, fresh presses remain usable,
+and Windows behavior remains compatible. No new OS permission prompts or access
+to credential, audio, recovery, clipboard or user text contents in verification.
+
+Read target/astack-guidance/instructions.md and its Ponytail review, boundary-proof
+and test-quality references. Inspect the current diff and connected callers.
+This is one fresh-context AStack Tier 2 review. Report only concrete must-fix or
+should-fix issues with source paths and failure scenarios. Do not edit repository
+code, run builds/tests, control desktop apps, access user data or start delegates.
+Write the report to target/macos-evidence/restart-insertion/tier2-review.md.
+Return the findings and unverified boundaries. No earlier review round exists for
+this new repair; previous unrelated findings are in docs/verification/review-responses.md.

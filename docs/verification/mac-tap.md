@@ -51,5 +51,28 @@ chord wholly between samples or media buttons outside keycodes 0–127.
 
 ## Native verification
 
-The previously installed Hold build remains unchanged while this update is
-checked. Tap has not yet been installed or physically verified in this record.
+The combined local app built successfully and passed strict bundle-signature
+verification. It was installed at `/Applications/Quill.app` with executable
+SHA-256 `ce5373933accf269212459944dfbe7001e38873a2968a3a278256484adb28405`.
+Native UI controls accepted Tap for both modes and Save changes reported Saved.
+The previous bundle is retained in ignored evidence. The changed executable
+reported Accessibility=false at 05:58:12 UTC; the user was asked once to renew
+approval for this copy. After the user completed approval, the unchanged app
+quit through its menu and restarted as PID 22464 at 06:18:00 UTC. Accessibility
+and input monitoring both reported true; settings showed Ready and both Tap
+selections persisted. The user then tested Fn Tap Dictation and Control+Fn Tap
+Scribe in a normal Chrome text field, including accepting the Scribe result,
+and confirmed both inserted automatically with the pill visible. Logs show
+Dictation recording at 06:18:44 UTC and Scribe recording/review at 06:18:58–06:19:11
+UTC. Insertion and visible-paint acceptance are user observations, not conclusions
+from panel creation logs. No further rebuild was made.
+
+This run did not test a newly relaunched Chrome website accessibility tree,
+post-repair Tap in T3, another keyboard, Intel hardware, or native Windows.
+The earlier restarted-Chrome search-bar result is recorded in
+[restart-insertion.md](restart-insertion.md).
+
+The matching source snapshot passed 205 Rust tests (one existing live-model test
+ignored), 75 Vitest tests, nine Python tests, typecheck, lint, frontend build,
+formatting and all-target Clippy. The app build used the existing sidecars and
+no bundle-resource override.
