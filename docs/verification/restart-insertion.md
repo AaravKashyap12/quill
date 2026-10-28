@@ -1,5 +1,10 @@
 # Focused editor discovery after a Mac restart
 
+This records the 2026-10-23 implementation and observations. The later
+[editor-target repair](editor-targets.md) replaces its deliberate second-press
+policy with guarded preparation during the same activation and records its
+separate verification status.
+
 On 2026-10-23, the unchanged installed executable from the previous verification
 still reported Accessibility and input access. T3 and Chrome failed before audio
 capture, while Hermes worked. Quill's log showed target capture failing and the
