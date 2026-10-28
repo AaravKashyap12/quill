@@ -46,6 +46,7 @@ extern "C" {
         key_down: bool,
     ) -> CGEventRef;
     fn CGEventPost(tap: u32, event: CGEventRef);
+    fn CGEventSourceCounterForEventType(state: i32, event_type: u32) -> u32;
     fn CGEventSetFlags(event: CGEventRef, flags: u64);
     fn CFRelease(value: *const c_void);
     fn CFRetain(value: *const c_void) -> *const c_void;
@@ -338,6 +339,7 @@ trait EditorDiscovery<E> {
     fn window(&mut self) -> Result<E>;
     fn editor(&mut self, window: &E) -> Result<Option<E>>;
     fn enable(&mut self);
+    fn input_epoch(&self) -> [u32; 4];
     fn wait(&mut self);
 }
 
@@ -348,6 +350,7 @@ fn discover_editor<E: Eq>(operations: &mut impl EditorDiscovery<E>) -> Result<Ed
     if !operations.active() {
         return Err(changed());
     }
+    let input_epoch = operations.input_epoch();
     let window = operations.window()?;
     if let Some(editor) = operations.editor(&window)? {
         return Ok(EditorFocus { window, editor });
@@ -357,13 +360,22 @@ fn discover_editor<E: Eq>(operations: &mut impl EditorDiscovery<E>) -> Result<Ed
     // inside the poll: that would keep postponing its initialization.
     let deadline = Instant::now() + Duration::from_secs(3);
     for _ in 0..60 {
-        if !operations.active() || operations.window()? != window {
+        if !operations.active()
+            || operations.window()? != window
+            || operations.input_epoch() != input_epoch
+        {
             return Err(changed());
         }
-        // No trustworthy field was captured at activation. Preparation
-        // may expose a different field, so only a fresh press can bind it.
-        if matches!(operations.editor(&window), Ok(Some(_))) {
-            return Err(anyhow!("Editor is ready — press your shortcut again."));
+        if let Some(editor) = operations.editor(&window)? {
+            // Bind immediately before microphone startup, after accessibility is
+            // ready. A click/key press during preparation cancels this attempt.
+            if operations.active()
+                && operations.window()? == window
+                && operations.input_epoch() == input_epoch
+            {
+                return Ok(EditorFocus { window, editor });
+            }
+            return Err(changed());
         }
         if Instant::now() >= deadline {
             break;
@@ -439,6 +451,12 @@ impl EditorDiscovery<AxElement> for NativeDiscovery<'_> {
             ?enhanced_result,
             "requested editor accessibility initialization"
         );
+    }
+
+    fn input_epoch(&self) -> [u32; 4] {
+        // Count events, never their contents. Modifier release is intentionally
+        // excluded so Hold and Tap activation can finish preparing the editor.
+        [1, 3, 10, 25].map(|event_type| unsafe { CGEventSourceCounterForEventType(0, event_type) })
     }
 
     fn wait(&mut self) {
@@ -612,6 +630,7 @@ mod tests {
         active: bool,
         changed_window: bool,
         acceptable: bool,
+        input_changes: bool,
     }
 
     impl ColdEditor {
@@ -623,6 +642,7 @@ mod tests {
                 active: true,
                 changed_window: false,
                 acceptable: true,
+                input_changes: false,
             }
         }
     }
@@ -655,18 +675,32 @@ mod tests {
         fn enable(&mut self) {
             self.enabled += 1;
         }
+        fn input_epoch(&self) -> [u32; 4] {
+            [u32::from(self.input_changes && self.waits > 0), 0, 0, 0]
+        }
         fn wait(&mut self) {
             self.waits += 1;
         }
     }
 
     #[test]
-    fn cold_editor_prepares_once_but_requires_a_fresh_capture() {
+    fn input_during_preparation_never_binds_a_later_field() {
         let mut app = ColdEditor::new();
-        assert!(discover_editor(&mut app)
-            .unwrap_err()
-            .to_string()
-            .contains("Editor is ready"));
+        app.input_changes = true;
+        assert!(discover_editor(&mut app).is_err());
+        assert_eq!(app.waits, 1);
+    }
+
+    #[test]
+    fn cold_editor_prepares_once_and_captures_without_a_second_shortcut() {
+        let mut app = ColdEditor::new();
+        assert_eq!(
+            discover_editor(&mut app).unwrap(),
+            EditorFocus {
+                window: 1,
+                editor: 10
+            }
+        );
         assert_eq!(app.enabled, 1);
         assert_eq!(app.waits, 2);
         assert_eq!(
