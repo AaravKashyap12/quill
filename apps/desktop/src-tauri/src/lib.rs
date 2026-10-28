@@ -612,6 +612,7 @@ pub fn run() {
                 // Startup checks never prompt. Settings offers an explicit action.
                 let accessibility = injection::accessibility_permission_granted();
                 tracing::info!(accessibility, "macOS insertion permission status");
+                app.manage(injection::EditorMonitor::start()?);
             }
 
             #[cfg(any(windows, target_os = "macos"))]
