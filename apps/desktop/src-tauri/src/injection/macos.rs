@@ -8,6 +8,10 @@ use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWork
 use std::ffi::c_void;
 use std::time::{Duration, Instant};
 
+#[path = "macos_tracking.rs"]
+mod tracking;
+pub use tracking::EditorMonitor;
+
 #[derive(Debug)]
 enum CaptureIssue {
     NonEditable,
@@ -101,12 +105,22 @@ pub fn request_accessibility_permission() -> bool {
 
 pub fn capture_target() -> Result<InsertionTarget> {
     ensure_accessibility_permission()?;
+    tracking::capture()
+}
+
+fn capture_frontmost(wait: bool) -> Result<InsertionTarget> {
+    ensure_accessibility_permission()?;
     let application = NSWorkspace::sharedWorkspace()
         .frontmostApplication()
         .ok_or_else(|| {
             anyhow!("macOS did not report a frontmost application for text insertion")
         })?;
     let process_id = application.processIdentifier();
+    if !wait && process_id == std::process::id() as i32 {
+        return Err(anyhow!(
+            "Quill UI is excluded from background editor tracking"
+        ));
+    }
     if process_id <= 0 {
         return Err(anyhow!(
             "macOS reported an invalid process identifier for the frontmost application"
@@ -117,7 +131,36 @@ pub fn capture_target() -> Result<InsertionTarget> {
         application: &application,
         ax,
     };
-    let focus = discover_editor(&mut discovery)?;
+    let focus = if wait {
+        discover_editor(&mut discovery)?
+    } else {
+        let window = match discovery.window() {
+            Ok(Some(window)) => window,
+            Ok(None) => {
+                discovery.enable();
+                return Err(anyhow!("Preparing the application's window"));
+            }
+            Err(error) => {
+                discovery.enable();
+                return Err(error);
+            }
+        };
+        let input_epoch = discovery.input_epoch();
+        let editor = discovery.editor(&window);
+        if !discovery.active()
+            || discovery.input_epoch() != input_epoch
+            || discovery.window()?.as_ref() != Some(&window)
+        {
+            return Err(anyhow!("The focused editor changed during observation."));
+        }
+        match editor? {
+            Some(editor) => EditorFocus { window, editor },
+            None => {
+                discovery.enable();
+                return Err(anyhow!("Preparing the application's text fields"));
+            }
+        }
+    };
     if !application.isActive() {
         return Err(anyhow!(
             "The focused application changed. Focus your text field and try again."
@@ -484,6 +527,20 @@ impl EditorDiscovery<AxElement> for NativeDiscovery<'_> {
     }
 
     fn enable(&mut self) {
+        // Share the debounce between background preparation and activation.
+        // Repeated EnhancedUserInterface writes postpone Chromium readiness.
+        static PREPARING: std::sync::Mutex<Vec<(i32, Instant)>> = std::sync::Mutex::new(Vec::new());
+        if let Ok(mut preparing) = PREPARING.lock() {
+            let pid = self.application.processIdentifier();
+            preparing.retain(|(_, at)| at.elapsed() < Duration::from_secs(5));
+            if preparing.iter().any(|(other, _)| *other == pid) {
+                return;
+            }
+            if preparing.len() == 16 {
+                preparing.remove(0);
+            }
+            preparing.push((pid, Instant::now()));
+        }
         // Reading the application role initializes Chromium's native AX support.
         let _ = unsafe { copy_string_attribute(self.ax.0, "AXRole") };
         let manual = CFString::new("AXManualAccessibility");

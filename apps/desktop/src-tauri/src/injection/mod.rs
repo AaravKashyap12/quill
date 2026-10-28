@@ -3,6 +3,8 @@ use arboard::Clipboard;
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::EditorMonitor;
 #[cfg(windows)]
 mod windows;
 
@@ -195,6 +197,9 @@ pub fn inject_text_to_target(target: &InsertionTarget, text: &str) -> Result<Tar
         if !macos::target_is_available(&target.inner) {
             return Ok(TargetInjection::Unavailable);
         }
+        // The session owns an immutable destination, even while the user reads
+        // another app. Restore and verify that field before posting any paste.
+        macos::activate_target(&target.inner)?;
         if !macos::target_is_foreground(&target.inner) {
             return Ok(TargetInjection::Queued);
         }
@@ -234,7 +239,6 @@ pub fn inject_review_text(target: &InsertionTarget, text: &str) -> Result<Target
 
     #[cfg(target_os = "macos")]
     {
-        macos::activate_target(&target.inner)?;
         inject_text_to_target(target, text)
     }
 
