@@ -150,4 +150,19 @@ An injected transient-focus regression fails when immediate success is restored,
 then passes with the settling gate. All 221 Rust tests pass (one existing ignored),
 including unchanged fast-path and failed-restoration coverage. Formatting, Clippy,
 the complete local app build and strict bundle-signature verification pass.
-Native insertion on this candidate remains pending.
+The installed candidate (commit `5151ff5`, tested tree
+`a6d52e726cfe6a40b05dee329304e3f6b561fe34`) has executable SHA-256
+`04f86fcbecee395295ddb09a0e71a37e690df718c5541db5c7104591b37f054f`.
+After renewed approval, its unchanged restart at 18:07:30 UTC confirmed both
+permissions. The user then confirmed that Fn Dictation, released while Chrome
+remained in a different full-screen Space, returned to T3 and inserted directly.
+The 18:08:04 log records successful activation and 512 ms of stable focus before
+posting Paste. The user separately confirmed Ctrl+Fn Scribe, review acceptance,
+and insertion into the original T3 field with the same cross-app sequence.
+
+This establishes the reported Chrome-to-T3 workflow on this Apple Silicon Mac.
+It does not establish every hidden browser tab, Intel hardware, or a cold-restart
+matrix. Existing password rejection remains covered by offline regressions; a new
+physical password-field test was not performed in this follow-up. The user’s
+installed build remains unchanged; packaging work uses a separate disposable app
+folder.
