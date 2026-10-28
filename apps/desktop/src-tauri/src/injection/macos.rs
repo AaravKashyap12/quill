@@ -85,6 +85,8 @@ extern "C" {
     fn AXValueGetType(value: AXValueRef) -> i32;
     fn AXValueGetValue(value: AXValueRef, value_type: i32, value_ptr: *mut c_void) -> bool;
     fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
+    fn AXUIElementCreateSystemWide() -> AXUIElementRef;
+    fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> AXError;
     fn AXUIElementCopyAttributeValue(
         element: AXUIElementRef,
         attribute: CFStringRef,
@@ -590,16 +592,30 @@ fn editable_role(role: &str, subrole: &str) -> bool {
     matches!(role, "AXTextField" | "AXTextArea" | "AXComboBox") && !subrole.contains("Secure")
 }
 
-fn focused_editor(process_id: i32) -> Result<EditorFocus<AxElement>> {
-    let application = unsafe { AxElement::from_owned(AXUIElementCreateApplication(process_id)) }?;
-    let window = application.element_attribute("AXFocusedWindow")?;
-    let editor = application.element_attribute("AXFocusedUIElement")?;
-    if editor.element_attribute("AXWindow")? != window {
+fn focused_editor(process_id: i32) -> Result<Option<EditorFocus<AxElement>>> {
+    // An inactive application's remembered AXFocusedUIElement is not proof
+    // that the system is routing keyboard input to it, notably during Spaces.
+    let system = unsafe { AxElement::from_owned(AXUIElementCreateSystemWide()) }?;
+    let Some(application) = system.optional_element_attribute("AXFocusedApplication")? else {
+        return Ok(None);
+    };
+    let mut focused_pid = 0;
+    if unsafe { AXUIElementGetPid(application.0, &mut focused_pid) } != AX_ERROR_SUCCESS {
         return Err(anyhow!(
-            "The focused editor changed. Focus the original text field and try again."
+            "macOS could not identify the keyboard-focused application."
         ));
     }
-    Ok(EditorFocus { window, editor })
+    if focused_pid != process_id {
+        return Ok(None);
+    }
+    let Some(editor) = system.optional_element_attribute("AXFocusedUIElement")? else {
+        return Ok(None);
+    };
+    let window = application.element_attribute("AXFocusedWindow")?;
+    if editor.element_attribute("AXWindow")? != window {
+        return Ok(None);
+    }
+    Ok(Some(EditorFocus { window, editor }))
 }
 
 trait FocusOperations<E> {
@@ -610,6 +626,9 @@ trait FocusOperations<E> {
     fn raise(&mut self, window: &E) -> Result<()>;
     fn focus(&mut self, editor: &E) -> Result<()>;
     fn wait(&mut self);
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
 }
 
 fn restore_focus<E: Eq>(
@@ -625,14 +644,29 @@ fn restore_focus<E: Eq>(
     }
     operations.raise(&target.window)?;
     operations.focus(&target.editor)?;
-    // AX setters and app activation can complete before keyboard focus moves.
-    let deadline = Instant::now() + Duration::from_millis(500);
-    for _ in 0..20 {
-        if operations.current()?.as_ref() == Some(target) {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
+    // AX activation/focus can acknowledge before a full-screen Space finishes
+    // switching. Require a stable system-wide target for 500ms after restoration;
+    // ordinary dictation in an already-focused editor keeps the fast path above.
+    let restored_at = operations.now();
+    let deadline = restored_at + Duration::from_millis(1500);
+    let mut stable_since = None;
+    for _ in 0..61 {
+        let current = operations.current()?;
+        let now = operations.now();
+        if now >= deadline {
             break;
+        }
+        if current.as_ref() == Some(target) {
+            let since = *stable_since.get_or_insert(now);
+            if now.duration_since(since) >= Duration::from_millis(500) {
+                tracing::info!(
+                    elapsed_ms = now.duration_since(restored_at).as_millis(),
+                    "original editor keyboard focus settled before paste"
+                );
+                return Ok(());
+            }
+        } else {
+            stable_since = None;
         }
         operations.wait();
     }
@@ -662,7 +696,7 @@ impl FocusOperations<AxElement> for NativeFocus<'_> {
         if !running_application(self.0).is_some_and(|app| app.isActive()) {
             return Ok(None);
         }
-        focused_editor(self.0.process_id).map(Some)
+        focused_editor(self.0.process_id)
     }
 
     fn activate(&mut self) -> Result<bool> {
@@ -995,6 +1029,9 @@ mod tests {
         restored: bool,
         pasted: Vec<EditorFocus<u32>>,
         recovery_retained: bool,
+        clock: Instant,
+        waits: u32,
+        transient_focus_at: Option<u32>,
     }
 
     impl FakeFocus {
@@ -1017,6 +1054,9 @@ mod tests {
                 restored: false,
                 pasted: Vec::new(),
                 recovery_retained: true,
+                clock: Instant::now(),
+                waits: 0,
+                transient_focus_at: None,
             }
         }
 
@@ -1042,7 +1082,8 @@ mod tests {
             if self.unreadable {
                 return Err(anyhow!("AX inaccessible"));
             }
-            Ok(self.active.then(|| self.current.clone()))
+            Ok((self.active && self.transient_focus_at != Some(self.waits))
+                .then(|| self.current.clone()))
         }
         fn activate(&mut self) -> Result<bool> {
             // Activating a process does not change its frontmost window/control.
@@ -1080,7 +1121,13 @@ mod tests {
             }
             Ok(())
         }
-        fn wait(&mut self) {}
+        fn wait(&mut self) {
+            self.waits += 1;
+            self.clock += Duration::from_millis(25);
+        }
+        fn now(&self) -> Instant {
+            self.clock
+        }
     }
 
     #[test]
@@ -1099,6 +1146,22 @@ mod tests {
             assert_eq!(ops.pasted, vec![target.clone()]);
             assert!(!ops.recovery_retained);
         }
+    }
+
+    #[test]
+    fn restored_editor_waits_for_stable_keyboard_focus_before_paste() {
+        let mut ops = FakeFocus::different_window();
+        let target = EditorFocus {
+            window: 1,
+            editor: 10,
+        };
+        ops.active = false;
+        // A transient system-wide focus change during a Spaces transition
+        // restarts the settling interval instead of accepting one AX read.
+        ops.transient_focus_at = Some(8);
+        ops.accept(&target).unwrap();
+        assert_eq!(ops.waits, 29);
+        assert_eq!(ops.pasted, vec![target]);
     }
 
     #[test]
@@ -1163,6 +1226,7 @@ mod tests {
         ops.restore_fails = true;
         ops.accept(&target).unwrap();
         assert!(!ops.restored);
+        assert_eq!(ops.waits, 0);
         assert_eq!(ops.pasted, vec![target]);
     }
 

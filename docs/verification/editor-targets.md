@@ -120,4 +120,34 @@ Reinstating the old refusal branch makes the new restoration regression fail.
 With the correction, 220 Rust tests pass (one existing ignored), including failed
 and ineffective Accessibility activation retaining text without simulated paste.
 Formatting, all-target Clippy, the app build and strict bundle-signature verification
-pass. The native fallback has not yet been verified on the installed app.
+pass. The activation-fix candidate was installed with SHA-256
+`1174a6c07bec4a0cbd8da3c59e1945d025617ed5491a29b17676361fec6c77cd`.
+Its unchanged restart at 15:12:44 UTC confirmed Accessibility and input access.
+
+## Full-screen Spaces delivery follow-up
+
+The user confirmed that the activation fallback returned to T3, but no text
+appeared in its chat input. Both apps were in full-screen Spaces. The 15:23:31 UTC
+log records successful AX activation, followed 23 ms later by the existing
+“text injected” log. That log records posting a paste command, not acknowledgement
+from the destination editor; it does not override the user's observed failure.
+
+The remaining hypothesis is that paste preceded completion of the Space/focus
+transition. Source inspection found that readiness read the application's own
+remembered editor and accepted its first matching response. The correction reads
+the system-wide focused application and editor instead, checks the application
+PID and exact window/control, and requires 500 ms of stable matching focus after
+restoration. A mismatch restarts that interval; a 1.5-second bound retains text
+rather than allowing an unverified paste. Already-focused dictation has no added
+settling delay. The final post-clipboard target check remains in place.
+
+The settling interval is a bounded mitigation, not a macOS guarantee that every
+Space animation has ended. Native full-screen delivery must still prove it on
+this machine. No post-command retry was added, which could duplicate a paste
+whose result is unknown. The monitor still reads identities/roles only.
+
+An injected transient-focus regression fails when immediate success is restored,
+then passes with the settling gate. All 221 Rust tests pass (one existing ignored),
+including unchanged fast-path and failed-restoration coverage. Formatting, Clippy,
+the complete local app build and strict bundle-signature verification pass.
+Native insertion on this candidate remains pending.
