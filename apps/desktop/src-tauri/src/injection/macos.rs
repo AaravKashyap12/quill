@@ -605,7 +605,8 @@ fn focused_editor(process_id: i32) -> Result<EditorFocus<AxElement>> {
 trait FocusOperations<E> {
     fn validate(&mut self, target: &EditorFocus<E>) -> Result<()>;
     fn current(&mut self) -> Result<Option<EditorFocus<E>>>;
-    fn activate(&mut self) -> Result<()>;
+    fn activate(&mut self) -> Result<bool>;
+    fn activate_accessibility(&mut self) -> Result<()>;
     fn raise(&mut self, window: &E) -> Result<()>;
     fn focus(&mut self, editor: &E) -> Result<()>;
     fn wait(&mut self);
@@ -619,7 +620,9 @@ fn restore_focus<E: Eq>(
     if operations.current().ok().flatten().as_ref() == Some(target) {
         return Ok(());
     }
-    operations.activate()?;
+    if !operations.activate()? {
+        operations.activate_accessibility()?;
+    }
     operations.raise(&target.window)?;
     operations.focus(&target.editor)?;
     // AX setters and app activation can complete before keyboard focus moves.
@@ -662,12 +665,36 @@ impl FocusOperations<AxElement> for NativeFocus<'_> {
         focused_editor(self.0.process_id).map(Some)
     }
 
-    fn activate(&mut self) -> Result<()> {
+    fn activate(&mut self) -> Result<bool> {
         let application = running_application(self.0).ok_or_else(|| {
             anyhow!("The application where dictation started is no longer running")
         })?;
-        if !application.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows) {
-            return Err(anyhow!("macOS refused to restore the original application. Return to that app and try again."));
+        Ok(application.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows))
+    }
+
+    fn activate_accessibility(&mut self) -> Result<()> {
+        let application =
+            unsafe { AxElement::from_owned(AXUIElementCreateApplication(self.0.process_id)) }?;
+        let attribute = CFString::new("AXFrontmost");
+        let frontmost = CFBoolean::true_value();
+        // AppKit may reject activation from a background app. The public AX
+        // application attribute uses Quill's existing Accessibility grant.
+        // This request is not proof of focus: restore_focus still verifies the
+        // exact application, window and control before allowing paste.
+        let result = unsafe {
+            AXUIElementSetAttributeValue(
+                application.0,
+                attribute.as_concrete_TypeRef(),
+                frontmost.as_CFTypeRef(),
+            )
+        };
+        tracing::info!(
+            process_id = self.0.process_id,
+            result,
+            "requested accessibility app activation after AppKit refusal"
+        );
+        if result != AX_ERROR_SUCCESS {
+            return Err(anyhow!("macOS could not restore the original application (Accessibility error {result}). Quill kept your text; return to that app and try again."));
         }
         Ok(())
     }
@@ -959,6 +986,10 @@ mod tests {
         closed: bool,
         unreadable: bool,
         restore_fails: bool,
+        activation_refused: bool,
+        accessibility_activation_fails: bool,
+        accessibility_activation_has_effect: bool,
+        accessibility_activations: usize,
         focus_fails: bool,
         restore_has_effect: bool,
         restored: bool,
@@ -977,6 +1008,10 @@ mod tests {
                 closed: false,
                 unreadable: false,
                 restore_fails: false,
+                activation_refused: false,
+                accessibility_activation_fails: false,
+                accessibility_activation_has_effect: true,
+                accessibility_activations: 0,
                 focus_fails: false,
                 restore_has_effect: true,
                 restored: false,
@@ -1009,9 +1044,21 @@ mod tests {
             }
             Ok(self.active.then(|| self.current.clone()))
         }
-        fn activate(&mut self) -> Result<()> {
+        fn activate(&mut self) -> Result<bool> {
             // Activating a process does not change its frontmost window/control.
-            self.active = true;
+            if !self.activation_refused {
+                self.active = true;
+            }
+            Ok(!self.activation_refused)
+        }
+        fn activate_accessibility(&mut self) -> Result<()> {
+            self.accessibility_activations += 1;
+            if self.accessibility_activation_fails {
+                return Err(anyhow!("AX activation refused"));
+            }
+            if self.accessibility_activation_has_effect {
+                self.active = true;
+            }
             Ok(())
         }
         fn raise(&mut self, window: &u32) -> Result<()> {
@@ -1048,8 +1095,43 @@ mod tests {
             ops.current.window = window;
             ops.accept(&target).unwrap();
             assert!(ops.restored);
+            assert_eq!(ops.accessibility_activations, 0);
             assert_eq!(ops.pasted, vec![target.clone()]);
             assert!(!ops.recovery_retained);
+        }
+    }
+
+    #[test]
+    fn refused_appkit_activation_restores_original_editor_through_accessibility() {
+        let target = EditorFocus {
+            window: 1,
+            editor: 10,
+        };
+        let mut ops = FakeFocus::different_window();
+        ops.active = false;
+        ops.activation_refused = true;
+        ops.accept(&target).unwrap();
+        assert_eq!(ops.accessibility_activations, 1);
+        assert_eq!(ops.pasted, vec![target]);
+        assert!(!ops.recovery_retained);
+    }
+
+    #[test]
+    fn inaccessible_or_ineffective_activation_retains_text_without_pasting() {
+        let target = EditorFocus {
+            window: 1,
+            editor: 10,
+        };
+        for refused in [true, false] {
+            let mut ops = FakeFocus::different_window();
+            ops.active = false;
+            ops.activation_refused = true;
+            ops.accessibility_activation_fails = refused;
+            ops.accessibility_activation_has_effect = false;
+            assert!(ops.accept(&target).is_err());
+            assert_eq!(ops.accessibility_activations, 1);
+            assert!(ops.pasted.is_empty());
+            assert!(ops.recovery_retained);
         }
     }
 

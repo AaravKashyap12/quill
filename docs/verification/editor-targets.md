@@ -57,8 +57,9 @@ Targeted tests also exercise superseding in-flight observations and blocking wor
 IPC during an active capture, using the production sampling boundary.
 Ignored logs are under `target/macos-evidence/editor-tracking/`.
 
-Native first-activation, cross-app/tab insertion, password rejection, and installed
-artifact checks remain pending. Unit tests do not establish these native results.
+Native acceptance remains incomplete: the first installed candidate exposed an
+application-activation failure during cross-app delivery, described below. Unit
+tests do not establish native cross-app/tab delivery or password rejection.
 
 The fresh-context reviewer reported five must-fix findings and one coverage gap.
 The lead addressed each within the original review round:
@@ -90,5 +91,33 @@ The unchanged frontend passed 75 Vitest tests, nine Python tests, typecheck,
 lint and build. The final candidate built with `scripts/build-macos-local.sh`
 and passed strict bundle-signature verification. No new dependencies, provider
 calls, permission resets or credential-store reads were needed for these checks.
-The installed executable was still the prior `ce537393…28405` build when these
-checks completed. It has not yet been replaced or verified with this repair.
+The first installed candidate was executable SHA-256
+`468ecd35af874e08f8914f739c92b1fb522d2fa07ef6d39cdfeb8b823f252379`,
+built from implementation commit `bde0be7`. After user approval, an unchanged
+restart at 14:58:48 UTC confirmed Accessibility and input access.
+
+## Cross-app activation correction
+
+The user reported successful insertion when returning to the editor, but queued
+text when releasing Fn while Chrome remained foreground. The 15:00:21 UTC log
+records “macOS refused to restore the original application.” At 15:00:24, the
+queued text inserted after the original editor regained focus. Destination
+retention succeeded; app activation failed before window/control restoration.
+
+The normal AppKit activation request now falls back to setting the retained
+destination application's public `AXFrontmost` attribute when AppKit refuses it.
+This uses the existing Accessibility grant. AX failure retains the result;
+setter success still requires the existing exact application/window/control
+readback and the final post-clipboard focus check. No deprecated activation flag,
+permission reset, arbitrary destination, or unconditional paste was added.
+
+- [Apple application accessibility attribute](https://developer.apple.com/documentation/applicationservices/kaxfrontmostattribute)
+- [Apple app activation API](https://developer.apple.com/documentation/appkit/nsrunningapplication/activate(options:))
+- Installed SDK: `NSAccessibilityProtocols.h` exposes writable
+  `accessibilityFrontmost`; `AXAttributeConstants.h` defines `AXFrontmost`.
+
+Reinstating the old refusal branch makes the new restoration regression fail.
+With the correction, 220 Rust tests pass (one existing ignored), including failed
+and ineffective Accessibility activation retaining text without simulated paste.
+Formatting, all-target Clippy, the app build and strict bundle-signature verification
+pass. The native fallback has not yet been verified on the installed app.
