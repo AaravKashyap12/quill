@@ -198,8 +198,17 @@ pub fn inject_text_to_target(target: &InsertionTarget, text: &str) -> Result<Tar
         if !macos::target_is_foreground(&target.inner) {
             return Ok(TargetInjection::Queued);
         }
-        inject_text(text)?;
-        Ok(TargetInjection::Inserted)
+        paste_after_verification(
+            || {
+                Clipboard::new()?.set_text(text.to_owned())?;
+                Ok(())
+            },
+            || {
+                macos::target_is_available(&target.inner)
+                    && macos::target_is_foreground(&target.inner)
+            },
+            macos::paste,
+        )
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
@@ -247,4 +256,61 @@ pub fn inject_text(text: &str) -> Result<()> {
     return macos::paste();
     #[allow(unreachable_code)]
     Err(anyhow!("text injection is unsupported on this platform"))
+}
+
+#[cfg(target_os = "macos")]
+fn paste_after_verification(
+    prepare_clipboard: impl FnOnce() -> Result<()>,
+    verify: impl FnOnce() -> bool,
+    paste: impl FnOnce() -> Result<()>,
+) -> Result<TargetInjection> {
+    prepare_clipboard()?;
+    if !verify() {
+        return Ok(TargetInjection::Queued);
+    }
+    paste()?;
+    Ok(TargetInjection::Inserted)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_delivery_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn focus_changes_during_clipboard_preparation_never_post_paste() {
+        let focused = Cell::new(true);
+        let posted = Cell::new(false);
+        let result = paste_after_verification(
+            || {
+                focused.set(false);
+                Ok(())
+            },
+            || focused.get(),
+            || {
+                posted.set(true);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(result, TargetInjection::Queued);
+        assert!(!posted.get());
+    }
+
+    #[test]
+    fn clipboard_or_paste_failure_is_not_reported_as_inserted() {
+        assert!(paste_after_verification(
+            || Err(anyhow!("clipboard unavailable")),
+            || panic!("no verification after clipboard failure"),
+            || panic!("no paste after clipboard failure"),
+        )
+        .is_err());
+        assert!(
+            paste_after_verification(|| Ok(()), || true, || Err(anyhow!("paste failed"))).is_err()
+        );
+        assert_eq!(
+            paste_after_verification(|| Ok(()), || true, || Ok(())).unwrap(),
+            TargetInjection::Inserted
+        );
+    }
 }
