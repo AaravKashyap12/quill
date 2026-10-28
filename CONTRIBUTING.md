@@ -81,3 +81,13 @@ Tauri updater signatures authenticate update artifacts; they do not provide
 Windows publisher trust or Apple Developer ID notarization. Describe the actual
 signing status and tested platform coverage in release notes. Publishing an
 artifact does not establish additional hardware or editor support.
+
+### Homebrew release follow-up
+
+After a Mac release is published, update `Casks/quill.rb` in the public
+[`homebrew-quill`](https://github.com/AaravKashyap12/homebrew-quill) tap with
+the exact release version and downloaded DMG SHA-256. Compare GitHub's asset
+digest and verify the complete app signature plus both executable architectures.
+Run the tap CI, which installs into a temporary app directory and uninstalls
+without launching Quill or deleting user data. Do not add quarantine-removal or
+permission-grant hooks. The website's scoped install command stays unchanged.

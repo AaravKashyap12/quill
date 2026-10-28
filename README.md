@@ -45,6 +45,34 @@ Quill is currently an **engineering preview**:
 
 This engineering preview is not a verified release on every platform.
 
+## Install
+
+Download the Windows installer or universal Mac DMG from the
+[latest release](https://github.com/AaravKashyap12/quill/releases/latest).
+
+On macOS 12+ with [Homebrew](https://brew.sh) installed:
+
+```sh
+brew install --cask aaravkashyap12/quill/quill
+```
+
+The [official tap](https://github.com/AaravKashyap12/homebrew-quill) pins the
+release and verifies its SHA-256. It installs the same universal app for Apple
+Silicon and Intel. Mac builds remain an engineering preview; see the
+[hardware verification record](docs/macos-verification.md).
+
+Quill is ad-hoc signed, not Apple-notarized. If macOS blocks first launch, use
+**System Settings → Privacy & Security → Open Anyway**. Setup needs Microphone
+access to record and Accessibility access to insert. Homebrew does not grant
+permissions or bypass macOS security. Quit Quill before replacing an existing
+installation. Uninstalling the cask preserves settings, models and saved keys.
+
+To update a Homebrew-managed installation (including apps with their own updater):
+
+```sh
+brew update && brew upgrade --cask --greedy aaravkashyap12/quill/quill
+```
+
 ## How the two modes differ
 
 Say:
