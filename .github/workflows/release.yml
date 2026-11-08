@@ -99,6 +99,7 @@ jobs:
         with:
           tagName: ${{ inputs.tag }}
           releaseName: Quill ${{ inputs.tag }}
+          releaseCommitish: ${{ inputs.ref || github.sha }}
           releaseDraft: true
           prerelease: false
           # tauri-action applies this before upload and uses the same name in
