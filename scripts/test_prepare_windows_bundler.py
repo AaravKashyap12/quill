@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -100,6 +101,46 @@ class BundlerTests(unittest.TestCase):
                 bundler.prepare(cache)
         self.assertEqual(old.read_bytes(), b"existing")
         self.assertEqual(list(cache.iterdir()), [old.parent])
+
+
+    def whisper_manifest(self):
+        path = self.root / "manifest.json"
+        path.write_text(json.dumps({"whisperCpp": {
+            "version": "v1.9.1",
+            "asset": "whisper-cublas-11.8.0-bin-x64.zip",
+            "sha256": "aecdce0e4d4bb758a7c72a31f3f9f19a7b6d861405fd2da743cd86398633c963",
+        }}))
+        return path
+
+    def test_whisper_archive_reaches_existing_build_script_cache(self):
+        cache = self.root / "whisper-cache"
+        def download(asset, destination):
+            self.assertEqual(asset[0:2], ("ggml-org/whisper.cpp", 451903965))
+            destination.write_bytes(b"verified archive")
+        with patch.object(bundler, "download_verified", side_effect=download):
+            bundler.prepare_whisper(cache, self.whisper_manifest())
+        self.assertEqual((cache / "whisper-cublas-11.8.0-bin-x64.zip").read_bytes(),
+                         b"verified archive")
+        self.assertEqual(len(list(cache.iterdir())), 1)
+
+    def test_changed_whisper_pin_stops_before_download(self):
+        manifest = self.whisper_manifest()
+        manifest.write_text(manifest.read_text().replace("v1.9.1", "v1.9.2"))
+        with patch.object(bundler, "download_verified") as download:
+            with self.assertRaisesRegex(ValueError, "match the app manifest"):
+                bundler.prepare_whisper(self.root / "cache", manifest)
+            download.assert_not_called()
+
+    def test_whisper_hash_failure_preserves_cached_archive(self):
+        cache = self.root / "cache"
+        cache.mkdir()
+        original = cache / "whisper-cublas-11.8.0-bin-x64.zip"
+        original.write_bytes(b"previous verified archive")
+        with patch.object(bundler, "download_verified", side_effect=ValueError("SHA-256 mismatch")):
+            with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+                bundler.prepare_whisper(cache, self.whisper_manifest())
+        self.assertEqual(original.read_bytes(), b"previous verified archive")
+        self.assertEqual(list(cache.iterdir()), [original])
 
 
 if __name__ == "__main__":

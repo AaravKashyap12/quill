@@ -6,6 +6,7 @@ NSIS SHA-256 values: the corresponding official GitHub release asset digests.
 The normal Tauri bundler still checks its own required files/plugin hashes.
 """
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -89,7 +90,24 @@ def prepare(cache):
     print(f"Prepared pinned Windows bundler tools in {cache}")
 
 
+def prepare_whisper(cache, manifest_path):
+    # Match the app revision's existing provenance; never silently change it.
+    whisper = json.loads(manifest_path.read_text())["whisperCpp"]
+    expected = ("v1.9.1", "whisper-cublas-11.8.0-bin-x64.zip",
+                "aecdce0e4d4bb758a7c72a31f3f9f19a7b6d861405fd2da743cd86398633c963")
+    if (whisper["version"], whisper["asset"], whisper["sha256"]) != expected:
+        raise ValueError("Update the official whisper asset pin to match the app manifest")
+    cache.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="verified-", dir=cache) as temporary:
+        archive = Path(temporary) / expected[1]
+        download_verified(("ggml-org/whisper.cpp", 451903965, expected[2]), archive)
+        archive.replace(cache / expected[1])
+    print("Prepared the app's checksum-verified whisper.cpp archive")
+
+
 if __name__ == "__main__":
     if os.name != "nt":
         raise SystemExit("Run this helper only on Windows")
+    prepare_whisper(Path(os.environ["TEMP"]) / "quill-whisper",
+                    Path("apps/desktop/src-tauri/resources/whisper/manifest.json"))
     prepare(Path(os.environ["LOCALAPPDATA"]) / "tauri")
