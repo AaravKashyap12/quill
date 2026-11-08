@@ -333,15 +333,14 @@ mod tests {
     fn interior_rms(samples: &[f32]) -> f32 {
         // Exclude the finite recording's edge extension from spectral checks.
         let interior = &samples[128..samples.len() - 128];
-        (interior.iter().map(|sample| sample * sample).sum::<f32>() / interior.len() as f32)
-            .sqrt()
+        (interior.iter().map(|sample| sample * sample).sum::<f32>() / interior.len() as f32).sqrt()
     }
 
     #[cfg(target_os = "macos")]
     #[test]
     fn mac_downsampling_rejects_frequencies_above_the_output_nyquist_limit() {
         for input_rate in [44_100, 48_000, 96_000] {
-            for frequency in [9_000.0, 12_000.0] {
+            for frequency in [8_200.0, 9_000.0, 10_000.0, 12_000.0] {
                 let input = test_tone(input_rate, frequency);
                 let output = resample_linear(&input, input_rate, WHISPER_SAMPLE_RATE);
                 assert_eq!(output.len(), 1_600);
@@ -411,5 +410,4 @@ mod tests {
             [0.0, 0.5, 1.0, 1.0]
         );
     }
-
 }
