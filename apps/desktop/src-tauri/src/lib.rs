@@ -114,6 +114,33 @@ fn request_macos_accessibility(window: tauri::WebviewWindow) -> Result<bool, Str
 }
 
 #[tauri::command]
+async fn open_macos_accessibility_settings(window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Open Quill settings to manage text insertion access.".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // A fixed destination avoids exposing an arbitrary URL or shell command to webviews.
+        tauri::async_runtime::spawn_blocking(|| {
+            let status = std::process::Command::new("/usr/bin/open")
+                .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+                .status()
+                .map_err(|error| format!("Could not open System Settings: {error}"))?;
+            if !status.success() {
+                return Err("Could not open System Settings. Open Privacy & Security → Accessibility manually.".into());
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Accessibility settings are only available on macOS.".into())
+    }
+}
+
+#[tauri::command]
 fn get_settings(state: State<'_, QuillState>) -> AppSettings {
     state
         .settings
@@ -683,6 +710,7 @@ pub fn run() {
             get_settings,
             get_macos_accessibility_status,
             request_macos_accessibility,
+            open_macos_accessibility_settings,
             save_settings,
             app_updates::check_app_update,
             app_updates::install_app_update,

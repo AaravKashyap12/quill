@@ -2250,6 +2250,12 @@ button:disabled {
   width: 178px;
 }
 
+.permission-actions {
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+}
+
 .voice-data-path {
   display: flex;
   align-items: center;

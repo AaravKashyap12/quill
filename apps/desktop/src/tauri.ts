@@ -116,6 +116,11 @@ export async function requestMacosAccessibility(): Promise<boolean> {
   return invoke<boolean>("request_macos_accessibility");
 }
 
+export async function openMacosAccessibilitySettings(): Promise<void> {
+  if (!isTauri()) throw new Error("Open System Settings → Privacy & Security → Accessibility on your Mac.");
+  await invoke("open_macos_accessibility_settings");
+}
+
 export async function setProviderKey(provider: CloudProvider, key: string): Promise<ProviderKeyStatus> {
   if (!isTauri()) {
     if (!key.trim()) throw new Error("Enter an API key before saving.");

@@ -22,6 +22,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m unittest discover -s scripts -p test_prepare_windows_bundler.py
+      - run: python -m unittest discover -s scripts -p test_macos_signing.py
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm typecheck
@@ -54,6 +55,9 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: bash ./scripts/build-whisper.sh metal
+      - name: Test macOS signing policy with real signed bundles
+        if: runner.os == 'macOS'
+        run: python3 -m unittest discover -s scripts -p test_macos_signing.py
       - name: Rust format
         working-directory: apps/desktop/src-tauri
         run: cargo fmt --check

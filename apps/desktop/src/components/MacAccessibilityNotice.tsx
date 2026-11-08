@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { isMac } from "../platform";
-import { getMacosAccessibilityStatus, requestMacosAccessibility } from "../tauri";
+import { getMacosAccessibilityStatus, openMacosAccessibilitySettings, requestMacosAccessibility } from "../tauri";
 
 export function MacAccessibilityNotice() {
   const [granted, setGranted] = useState<boolean | null>(null);
@@ -36,7 +36,19 @@ export function MacAccessibilityNotice() {
 
   async function recheck() {
     setBusy(true);
-    try { setGranted(await getMacosAccessibilityStatus()); setError(null); }
+    try {
+      const allowed = await getMacosAccessibilityStatus();
+      setGranted(allowed);
+      setError(allowed ? null : "Access is still off for this copy of Quill. Enable /Applications/Quill.app in System Settings, then quit and reopen Quill. If access is still denied after an update, remove only Quill from that list with the minus button, add the current app with the plus button, and enable it again.");
+    }
+    catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  }
+
+  async function openSettings() {
+    setBusy(true);
+    setError(null);
+    try { await openMacosAccessibilitySettings(); }
     catch (reason) { setError(String(reason)); }
     finally { setBusy(false); }
   }
@@ -51,10 +63,11 @@ export function MacAccessibilityNotice() {
           {requested && <p className="setting-description" role="status">Enable Quill in System Settings → Privacy &amp; Security → Accessibility (Device Control and Data Access on some macOS versions), then return here.</p>}
           {error && <p className="setting-description" role="alert">{error}</p>}
         </div>
-        <div className="inline-control">
+        <div className="inline-control permission-actions">
           <button type="button" className="row-download-button" disabled={busy} onClick={requested ? recheck : enable}>
             {requested ? "Check access" : "Enable text insertion"}
           </button>
+          {requested && <button type="button" className="row-download-button" disabled={busy} onClick={openSettings}>Open System Settings</button>}
         </div>
       </div>
     </section>
