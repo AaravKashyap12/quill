@@ -452,7 +452,6 @@ mod tests {
         }
     }
 
-
     #[cfg(target_os = "macos")]
     #[test]
     fn mac_capture_dispatch_uses_the_antialias_filter() {
