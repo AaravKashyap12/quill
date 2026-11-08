@@ -318,4 +318,98 @@ mod tests {
             "silence should decay, not snap"
         );
     }
+
+    #[cfg(target_os = "macos")]
+    fn test_tone(rate: u32, frequency: f64) -> Vec<f32> {
+        (0..rate / 10)
+            .map(|index| {
+                (std::f64::consts::TAU * frequency * f64::from(index) / f64::from(rate)).sin()
+                    as f32
+            })
+            .collect()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn interior_rms(samples: &[f32]) -> f32 {
+        // Exclude the finite recording's edge extension from spectral checks.
+        let interior = &samples[128..samples.len() - 128];
+        (interior.iter().map(|sample| sample * sample).sum::<f32>() / interior.len() as f32)
+            .sqrt()
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_downsampling_rejects_frequencies_above_the_output_nyquist_limit() {
+        for input_rate in [44_100, 48_000, 96_000] {
+            for frequency in [9_000.0, 12_000.0] {
+                let input = test_tone(input_rate, frequency);
+                let output = resample_linear(&input, input_rate, WHISPER_SAMPLE_RATE);
+                assert_eq!(output.len(), 1_600);
+                assert!(
+                    interior_rms(&output) < 0.005,
+                    "{input_rate} Hz input must not alias a {frequency} Hz tone into speech"
+                );
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_downsampling_preserves_speech_band_energy() {
+        for input_rate in [44_100, 48_000, 96_000] {
+            for frequency in [1_000.0, 6_000.0] {
+                let input = test_tone(input_rate, frequency);
+                let output = resample_linear(&input, input_rate, WHISPER_SAMPLE_RATE);
+                let rms = interior_rms(&output);
+                assert!(
+                    (0.63..0.78).contains(&rms),
+                    "{input_rate} Hz input must retain speech-band energy at {frequency} Hz: {rms}"
+                );
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_downsampling_preserves_short_constant_recordings_and_timing() {
+        for input_rate in [44_100, 48_000, 96_000] {
+            for length in [1, 17, 1_000] {
+                let input = vec![0.25; length];
+                let output = resample_linear(&input, input_rate, WHISPER_SAMPLE_RATE);
+                assert_eq!(
+                    output.len(),
+                    length * WHISPER_SAMPLE_RATE as usize / input_rate as usize
+                );
+                assert!(output.iter().all(|sample| (*sample - 0.25).abs() < 0.00001));
+            }
+
+            let mut impulse = vec![0.0; input_rate as usize / 10];
+            impulse[input_rate as usize / 100] = 1.0;
+            let output = resample_linear(&impulse, input_rate, WHISPER_SAMPLE_RATE);
+            let peak = output
+                .iter()
+                .enumerate()
+                .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
+                .unwrap()
+                .0;
+            assert_eq!(peak, 160, "resampling must not shift word timing");
+        }
+    }
+
+    #[test]
+    fn resampling_handles_empty_invalid_and_unchanged_rates() {
+        assert!(resample_linear(&[], 48_000, WHISPER_SAMPLE_RATE).is_empty());
+        assert!(resample_linear(&[0.25], 0, WHISPER_SAMPLE_RATE).is_empty());
+        assert!(resample_linear(&[0.25], 48_000, 0).is_empty());
+        let input = [0.1, -0.2, 0.3];
+        assert_eq!(
+            resample_linear(&input, WHISPER_SAMPLE_RATE, WHISPER_SAMPLE_RATE),
+            input
+        );
+        assert_eq!(
+            resample_linear(&[0.0, 1.0], 8_000, WHISPER_SAMPLE_RATE),
+            [0.0, 0.5, 1.0, 1.0]
+        );
+    }
+
 }
