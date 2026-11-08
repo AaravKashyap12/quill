@@ -45,7 +45,7 @@ jobs:
             args: --target x86_64-pc-windows-msvc
             rustTargets: x86_64-pc-windows-msvc
             assetNamePattern: Quill-windows-x64[ext]
-          - os: macos-14
+          - os: macos-15
             # The app target is required for Tauri to create the signed
             # .app.tar.gz updater artifact; dmg remains the tester installer.
             args: --target universal-apple-darwin --bundles app,dmg
@@ -84,6 +84,9 @@ jobs:
       - name: Build universal macOS whisper.cpp sidecar
         if: runner.os == 'macOS'
         shell: bash
+        env:
+          # Match the app's minimum rather than inheriting the runner's OS.
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
         run: bash ./scripts/build-whisper.sh metal
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -108,6 +111,49 @@ jobs:
         run: |
           codesign --verify --deep --strict --all-architectures \
             apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Quill.app
+
+          python3 - <<'PY'
+          import json
+          import plistlib
+          import subprocess
+          from pathlib import Path
+
+          def version(value):
+              parts = tuple(int(part) for part in value.split("."))
+              return parts + (0,) * (3 - len(parts))
+
+          def minimum_macos(load_commands):
+              command = None
+              minimums = []
+              for line in load_commands.splitlines():
+                  fields = line.split()
+                  if len(fields) < 2:
+                      continue
+                  if fields[0] == "cmd":
+                      command = fields[1]
+                  elif (command == "LC_BUILD_VERSION" and fields[0] == "minos") or (
+                      command == "LC_VERSION_MIN_MACOSX" and fields[0] == "version"
+                  ):
+                      minimums.append(version(fields[1]))
+              if len(minimums) != 1:
+                  raise RuntimeError("Expected one macOS deployment target per architecture")
+              return minimums[0]
+
+          config = json.loads(Path("apps/desktop/src-tauri/tauri.conf.json").read_text())
+          minimum = version(config["bundle"]["macOS"]["minimumSystemVersion"])
+          app = Path("apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Quill.app")
+          with (app / "Contents/Info.plist").open("rb") as source:
+              executable = plistlib.load(source)["CFBundleExecutable"]
+          for name in (executable, "whisper-server"):
+              binary = app / "Contents/MacOS" / name
+              for arch in ("arm64", "x86_64"):
+                  subprocess.run(["lipo", str(binary), "-verify_arch", arch], check=True)
+                  commands = subprocess.check_output(["otool", "-arch", arch, "-l", str(binary)], text=True)
+                  actual = minimum_macos(commands)
+                  if actual > minimum:
+                      raise RuntimeError(f"{name} ({arch}) requires macOS {actual}, above declared {minimum}")
+                  print(f"Verified {name} ({arch}) minimum macOS {actual}")
+          PY
 
       - name: Upload optional CUDA runtime pack
         if: runner.os == 'Windows'
