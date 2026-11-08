@@ -164,7 +164,7 @@ impl AudioCapture {
             .clone();
         let duration_ms = source.len() as u64 * 1_000 / u64::from(self.source_sample_rate.max(1));
         Ok(AudioSnapshot {
-            samples: resample_linear(&source, self.source_sample_rate, WHISPER_SAMPLE_RATE),
+            samples: resample_audio(&source, self.source_sample_rate, WHISPER_SAMPLE_RATE),
             duration_ms,
         })
     }
@@ -228,12 +228,16 @@ fn update_visual_levels(visual_levels: &Arc<Mutex<[f32; VISUALIZER_BARS]>>, samp
     }
 }
 
-fn resample_linear(input: &[f32], input_rate: u32, output_rate: u32) -> Vec<f32> {
+fn resample_audio(input: &[f32], input_rate: u32, output_rate: u32) -> Vec<f32> {
     if input.is_empty() || input_rate == 0 || output_rate == 0 {
         return Vec::new();
     }
     if input_rate == output_rate {
         return input.to_vec();
+    }
+    #[cfg(target_os = "macos")]
+    if input_rate > output_rate {
+        return downsample_filtered(input, input_rate, output_rate);
     }
     let output_len = input.len() * output_rate as usize / input_rate as usize;
     let ratio = input_rate as f64 / output_rate as f64;
@@ -244,6 +248,64 @@ fn resample_linear(input: &[f32], input_rate: u32, output_rate: u32) -> Vec<f32>
             let right = (left + 1).min(input.len() - 1);
             let fraction = (position - left as f64) as f32;
             input[left] * (1.0 - fraction) + input[right] * fraction
+        })
+        .collect()
+}
+
+/// Downsample completed Mac capture snapshots without folding ultrasonic and
+/// upper-band microphone noise into the 16 kHz recognizer's speech band.
+/// Filtering stays outside the capture callback and its sample-buffer lock.
+#[cfg(any(target_os = "macos", test))]
+fn downsample_filtered(input: &[f32], input_rate: u32, output_rate: u32) -> Vec<f32> {
+    let output_len = input.len() * output_rate as usize / input_rate as usize;
+    if output_len == 0 {
+        return Vec::new();
+    }
+    let ratio = f64::from(input_rate) / f64::from(output_rate);
+    let radius = (16.0 * ratio).ceil() as usize;
+    // Leave a transition band below the output Nyquist limit. This retains
+    // the lower speech band while suppressing frequencies that would alias.
+    let cutoff = 0.45 / ratio;
+    let mut taps = (0..=2 * radius)
+        .map(|index| {
+            let distance = index as f64 - radius as f64;
+            let sinc = if index == radius {
+                2.0 * cutoff
+            } else {
+                (std::f64::consts::TAU * cutoff * distance).sin()
+                    / (std::f64::consts::PI * distance)
+            };
+            let window = 0.5 + 0.5 * (std::f64::consts::PI * distance / radius as f64).cos();
+            sinc * window
+        })
+        .collect::<Vec<_>>();
+    let gain = taps.iter().sum::<f64>();
+    for tap in &mut taps {
+        *tap /= gain;
+    }
+    let filtered = |center: usize| {
+        taps.iter()
+            .enumerate()
+            .map(|(index, weight)| {
+                // Extend both edges rather than fading a short recording with
+                // zero padding. A centered filter adds no word-timing delay.
+                let source = (center + index).saturating_sub(radius).min(input.len() - 1);
+                f64::from(input[source]) * weight
+            })
+            .sum::<f64>()
+    };
+    (0..output_len)
+        .map(|index| {
+            let position = index as f64 * ratio;
+            let left = position.floor() as usize;
+            let fraction = position - left as f64;
+            let first = filtered(left);
+            if fraction == 0.0 {
+                first as f32
+            } else {
+                let second = filtered((left + 1).min(input.len() - 1));
+                (first * (1.0 - fraction) + second * fraction) as f32
+            }
         })
         .collect()
 }
@@ -284,7 +346,7 @@ mod tests {
 
     #[test]
     fn resamples_to_sixteen_kilohertz() {
-        let output = resample_linear(&vec![0.25; 48_000], 48_000, WHISPER_SAMPLE_RATE);
+        let output = resample_audio(&vec![0.25; 48_000], 48_000, WHISPER_SAMPLE_RATE);
         assert_eq!(output.len(), 16_000);
         assert!(output
             .iter()
@@ -316,6 +378,132 @@ mod tests {
         assert!(
             decay_peak < loud_peak && decay_peak > 0.0,
             "silence should decay, not snap"
+        );
+    }
+
+    fn test_tone(rate: u32, frequency: f64) -> Vec<f32> {
+        (0..rate / 10)
+            .map(|index| {
+                (std::f64::consts::TAU * frequency * f64::from(index) / f64::from(rate)).sin()
+                    as f32
+            })
+            .collect()
+    }
+
+    fn interior_rms(samples: &[f32]) -> f32 {
+        // Exclude the finite recording's edge extension from spectral checks.
+        let interior = &samples[128..samples.len() - 128];
+        (interior.iter().map(|sample| sample * sample).sum::<f32>() / interior.len() as f32).sqrt()
+    }
+
+    #[test]
+    fn filtered_downsampling_rejects_frequencies_above_the_output_nyquist_limit() {
+        for input_rate in [44_100, 48_000, 96_000] {
+            for frequency in [8_200.0, 9_000.0, 10_000.0, 12_000.0] {
+                let input = test_tone(input_rate, frequency);
+                let output = downsample_filtered(&input, input_rate, WHISPER_SAMPLE_RATE);
+                assert_eq!(output.len(), 1_600);
+                assert!(
+                    interior_rms(&output) < 0.005,
+                    "{input_rate} Hz input must not alias a {frequency} Hz tone into speech"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn filtered_downsampling_preserves_speech_band_energy() {
+        for input_rate in [44_100, 48_000, 96_000] {
+            for frequency in [1_000.0, 6_000.0] {
+                let input = test_tone(input_rate, frequency);
+                let output = downsample_filtered(&input, input_rate, WHISPER_SAMPLE_RATE);
+                let rms = interior_rms(&output);
+                assert!(
+                    (0.63..0.78).contains(&rms),
+                    "{input_rate} Hz input must retain speech-band energy at {frequency} Hz: {rms}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn filtered_downsampling_preserves_short_constant_recordings_and_timing() {
+        for input_rate in [44_100, 48_000, 96_000] {
+            for length in [1, 17, 1_000] {
+                let input = vec![0.25; length];
+                let output = downsample_filtered(&input, input_rate, WHISPER_SAMPLE_RATE);
+                assert_eq!(
+                    output.len(),
+                    length * WHISPER_SAMPLE_RATE as usize / input_rate as usize
+                );
+                assert!(output.iter().all(|sample| (*sample - 0.25).abs() < 0.00001));
+            }
+
+            let mut impulse = vec![0.0; input_rate as usize / 10];
+            impulse[input_rate as usize / 100] = 1.0;
+            let output = downsample_filtered(&impulse, input_rate, WHISPER_SAMPLE_RATE);
+            let peak = output
+                .iter()
+                .enumerate()
+                .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
+                .unwrap()
+                .0;
+            assert_eq!(peak, 160, "resampling must not shift word timing");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_capture_dispatch_uses_the_antialias_filter() {
+        let input = test_tone(48_000, 10_000.0);
+        let output = resample_audio(&input, 48_000, WHISPER_SAMPLE_RATE);
+        assert!(interior_rms(&output) < 0.005);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn non_mac_capture_retains_its_existing_linear_conversion() {
+        let input = [0.0, 0.2, -0.3, 0.4, 0.1, -0.1];
+        assert_eq!(
+            resample_audio(&input, 48_000, WHISPER_SAMPLE_RATE),
+            [0.0, 0.4]
+        );
+    }
+
+    #[test]
+    fn filtered_downsampling_keeps_speech_when_high_frequency_noise_is_present() {
+        for input_rate in [44_100, 48_000, 96_000] {
+            let speech = test_tone(input_rate, 1_000.0);
+            let noise = test_tone(input_rate, 10_000.0);
+            let mixed = speech
+                .iter()
+                .zip(noise)
+                .map(|(voice, noise)| (voice + noise) * 0.5)
+                .collect::<Vec<_>>();
+            let actual = downsample_filtered(&mixed, input_rate, WHISPER_SAMPLE_RATE);
+            let expected = test_tone(WHISPER_SAMPLE_RATE, 1_000.0);
+            let error = actual
+                .iter()
+                .zip(expected)
+                .map(|(actual, expected)| actual - expected * 0.5)
+                .collect::<Vec<_>>();
+            assert!(interior_rms(&error) < 0.01);
+        }
+    }
+
+    #[test]
+    fn resampling_handles_empty_invalid_and_unchanged_rates() {
+        assert!(resample_audio(&[], 48_000, WHISPER_SAMPLE_RATE).is_empty());
+        assert!(resample_audio(&[0.25], 0, WHISPER_SAMPLE_RATE).is_empty());
+        assert!(resample_audio(&[0.25], 48_000, 0).is_empty());
+        let input = [0.1, -0.2, 0.3];
+        assert_eq!(
+            resample_audio(&input, WHISPER_SAMPLE_RATE, WHISPER_SAMPLE_RATE),
+            input
+        );
+        assert_eq!(
+            resample_audio(&[0.0, 1.0], 8_000, WHISPER_SAMPLE_RATE),
+            [0.0, 0.5, 1.0, 1.0]
         );
     }
 }
