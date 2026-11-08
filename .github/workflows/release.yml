@@ -134,6 +134,8 @@ jobs:
         run: |
           codesign --verify --deep --strict --all-architectures \
             apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Quill.app
+          python3 scripts/verify_macos_bundle.py \
+            apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Quill.app
 
           python3 - <<'PY'
           import json

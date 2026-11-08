@@ -1,5 +1,9 @@
 # macOS verification record
 
+For the 2026-11-08 zero-audio investigation, signing-only hardware comparison,
+and Accessibility recovery work, see
+[macOS microphone 0.4.5](verification/macos-microphone-0.4.5.md).
+
 ## Scope and build
 
 2026-10-22, Apple M5 Pro, macOS 27.0.1 (26A434), 24 GB RAM. Base commit

@@ -1,4 +1,5 @@
 import type { ReactElement, ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MacAccessibilityNotice } from "./MacAccessibilityNotice";
 import * as native from "../tauri";
@@ -20,17 +21,18 @@ vi.mock("react", async (original) => ({
 vi.mock("../tauri", () => ({
   getMacosAccessibilityStatus: vi.fn(async () => false),
   requestMacosAccessibility: vi.fn(async () => false),
+  openMacosAccessibilitySettings: vi.fn(async () => {}),
 }));
 
 function render() { harness.cursor = 0; return MacAccessibilityNotice(); }
-function button(node: ReactElement | null): { onClick: () => Promise<void>; children: string } {
+function button(node: ReactElement | null, label?: string): { onClick: () => Promise<void>; children: string } {
   const element = node as ReactElement<{ children?: ReactNode; onClick?: () => Promise<void> }>;
-  if (element.type === "button" && element.props.onClick && typeof element.props.children === "string") {
+  if (element.type === "button" && element.props.onClick && typeof element.props.children === "string" && (!label || element.props.children === label)) {
     return { onClick: element.props.onClick, children: element.props.children };
   }
   for (const child of [element.props.children].flat()) {
     if (child && typeof child === "object") {
-      try { return button(child as ReactElement); } catch { /* search remaining siblings */ }
+      try { return button(child as ReactElement, label); } catch { /* search remaining siblings */ }
     }
   }
   throw new Error("No permission button");
@@ -40,6 +42,7 @@ beforeEach(() => {
   harness.states = []; harness.cursor = 0; harness.effects = []; harness.focus = null;
   vi.clearAllMocks();
   vi.mocked(native.getMacosAccessibilityStatus).mockResolvedValue(false);
+  vi.mocked(native.openMacosAccessibilitySettings).mockResolvedValue(undefined);
   vi.stubGlobal("window", {
     location: { search: "?platform=mac" },
     addEventListener: (_: string, callback: () => void) => { harness.focus = callback; },
@@ -74,4 +77,25 @@ it("does not query or request Mac permissions on Windows", () => {
   for (const effect of harness.effects.splice(0)) effect();
   expect(native.getMacosAccessibilityStatus).not.toHaveBeenCalled();
   expect(native.requestMacosAccessibility).not.toHaveBeenCalled();
+});
+
+it("explains how to recover when Check access still reports denied", async () => {
+  await button(render()).onClick();
+  await button(render()).onClick();
+  const html = renderToStaticMarkup(render());
+  expect(html).toContain("Access is still off for this copy of Quill.");
+  expect(html).toContain("/Applications/Quill.app");
+  expect(html).toContain("quit and reopen Quill");
+  expect(html).toContain("remove only Quill");
+  expect(native.requestMacosAccessibility).toHaveBeenCalledOnce();
+});
+
+it("reopens System Settings without repeating the consent prompt and reports open failures", async () => {
+  await button(render()).onClick();
+  await button(render(), "Open System Settings").onClick();
+  expect(native.openMacosAccessibilitySettings).toHaveBeenCalledOnce();
+  expect(native.requestMacosAccessibility).toHaveBeenCalledOnce();
+  vi.mocked(native.openMacosAccessibilitySettings).mockRejectedValueOnce(new Error("Settings could not open"));
+  await button(render(), "Open System Settings").onClick();
+  expect(renderToStaticMarkup(render())).toContain("Settings could not open");
 });

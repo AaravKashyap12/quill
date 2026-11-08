@@ -24,7 +24,8 @@ fi
 # valid bundle signature and must not be used for macOS permission testing.
 codesign --force --sign - --identifier "$bundle_id.whisper-server" \
   "$app_bundle/Contents/MacOS/whisper-server"
-codesign --force --sign - --identifier "$bundle_id" "$app_bundle"
-codesign --verify --deep --strict --verbose=2 "$app_bundle"
+codesign --force --sign - --identifier "$bundle_id" --options runtime \
+  --entitlements "$repo_root/apps/desktop/src-tauri/Entitlements.plist" "$app_bundle"
+python3 "$repo_root/scripts/verify_macos_bundle.py" "$app_bundle"
 echo "Verified local app: $app_bundle"
 echo "Install this final build before granting permissions. Rebuilding changes its ad-hoc identity."
