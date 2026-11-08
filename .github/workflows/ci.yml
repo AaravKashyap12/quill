@@ -21,6 +21,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - run: python -m unittest discover -s scripts -p test_prepare_windows_bundler.py
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm typecheck
@@ -40,6 +41,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Windows'
+        with:
+          python-version: "3.13"
+      - name: Verify Windows bundler dependency downloads
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/prepare_windows_bundler.py
       - name: Build pinned macOS whisper.cpp sidecar
         if: runner.os == 'macOS'
         shell: bash

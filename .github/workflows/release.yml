@@ -77,6 +77,26 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
       - run: pnpm install --frozen-lockfile
+      # Use tooling from this workflow revision even when resuming an older
+      # already-versioned app revision. Never move its existing release tag.
+      - name: Check out release dependency helper
+        if: runner.os == 'Windows'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts/prepare_windows_bundler.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Windows'
+        with:
+          python-version: "3.13"
+      - name: Prepare verified Windows bundler tools
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python .release-tools/scripts/prepare_windows_bundler.py
       - name: Build Windows whisper.cpp
         if: runner.os == 'Windows'
         shell: pwsh
@@ -97,6 +117,8 @@ jobs:
           # Ad-hoc signing needs no certificate and is not notarization.
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
         with:
+          # Use the repository lockfile, not a floating globally installed CLI.
+          tauriScript: pnpm tauri
           tagName: ${{ inputs.tag }}
           releaseName: Quill ${{ inputs.tag }}
           releaseCommitish: ${{ inputs.ref || github.sha }}
