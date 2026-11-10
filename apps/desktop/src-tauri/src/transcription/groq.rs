@@ -236,6 +236,13 @@ fn accepted_text_and_ranges(
         .iter()
         .filter(|segment| segment_is_trustworthy_with_audio(segment, speech))
         .collect::<Vec<_>>();
+    if accepted.len() != payload.segments.len() {
+        tracing::warn!(
+            provider_segments = payload.segments.len(),
+            accepted_segments = accepted.len(),
+            "Groq segment filters omitted transcript segments"
+        );
+    }
     let text = accepted
         .iter()
         .map(|segment| segment.text.trim())
@@ -430,6 +437,67 @@ mod tests {
     fn confident_segments_are_kept_even_when_they_contain_a_url() {
         let segment = segment("Open youtube.com", 0.02, -0.08, 1.1);
         assert!(segment_is_trustworthy(&segment));
+    }
+
+    #[test]
+    fn sustained_speech_across_a_pause_keeps_both_passages() {
+        let mut first = segment("Keep this first sentence.", 0.01, -0.1, 1.0);
+        first.end = 4.0;
+        let mut second = segment("Keep the final sentence too.", 0.01, -0.1, 1.0);
+        second.start = 4.0;
+        second.end = 5.0;
+        let payload = GroqResponse {
+            words: Vec::new(),
+            segments: vec![first, second],
+        };
+        let mut activity = vec![false; 250];
+        activity[5..10].fill(true);
+        activity[190..195].fill(true);
+        activity[210..240].fill(true);
+        let (text, _) = accepted_text_and_ranges(&payload, &acoustic_window(activity));
+        assert_eq!(
+            text,
+            "Keep this first sentence. Keep the final sentence too."
+        );
+        let (words, _) = words_or_synthetic(Vec::new(), &text, 80_000);
+        assert_eq!(words.len(), 9);
+    }
+
+    #[test]
+    fn one_and_two_minute_responses_preserve_every_passage_across_pauses() {
+        for seconds in [60, 120] {
+            let mut activity = vec![false; seconds * 50];
+            let mut segments = Vec::new();
+            let mut expected = Vec::new();
+            for index in 0..seconds / 20 {
+                let text = format!("Passage {}, um, stays complete.", index + 1);
+                let mut passage = segment(&text, 0.01, -0.1, 1.0);
+                passage.start = (index * 20) as f64;
+                passage.end = ((index + 1) * 20) as f64;
+                let offset = index * 1_000;
+                activity[offset + 50..offset + 88].fill(true);
+                activity[offset + 800..offset + 838].fill(true);
+                segments.push(passage);
+                expected.push(text);
+            }
+            let payload = GroqResponse {
+                words: Vec::new(),
+                segments,
+            };
+            let (text, ranges) = accepted_text_and_ranges(&payload, &acoustic_window(activity));
+            assert_eq!(text, expected.join(" "), "{seconds}-second response");
+            assert_eq!(ranges.unwrap().len(), seconds / 20);
+            let (words, synthetic) = words_or_synthetic(Vec::new(), &text, seconds * 16_000);
+            assert!(synthetic);
+            assert_eq!(
+                words
+                    .iter()
+                    .map(|word| word.text.as_str())
+                    .collect::<Vec<_>>(),
+                text.split_whitespace().collect::<Vec<_>>()
+            );
+            assert_eq!(words.last().unwrap().end_ms, seconds as u64 * 1_000);
+        }
     }
 
     #[test]

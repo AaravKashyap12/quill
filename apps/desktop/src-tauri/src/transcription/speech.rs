@@ -43,7 +43,11 @@ impl SpeechWindow {
             return false;
         }
         let voiced = interval.iter().filter(|decision| **decision).count();
-        voiced >= 2 && voiced as f32 / interval.len() as f32 >= MIN_VOICE_RATIO
+        // A long pause must not dilute a sustained speech run into "no speech".
+        let sustained = interval
+            .windows(MIN_VOICED_FRAMES)
+            .any(|run| run.iter().all(|voiced| *voiced));
+        sustained || (voiced >= 2 && voiced as f32 / interval.len() as f32 >= MIN_VOICE_RATIO)
     }
 }
 
@@ -160,7 +164,8 @@ mod tests {
     fn a_very_long_pause_does_not_invalidate_real_speech() {
         let active = (5..10).chain(190..195).collect::<Vec<_>>();
         let decisions = activity(200, &active);
-        assert!(window_from_activity(&decisions, decisions.len() * FRAME_SAMPLES).is_some());
+        let window = window_from_activity(&decisions, decisions.len() * FRAME_SAMPLES).unwrap();
+        assert!(window.supports_interval(0.0, 4.0));
     }
 
     #[test]
