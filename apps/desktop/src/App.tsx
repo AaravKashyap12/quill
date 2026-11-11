@@ -170,8 +170,7 @@ function SettingsApp() {
       installedModels.current = installed;
       setSystemProfile(profile);
       if (loaded.transcriptionProvider !== "local") {
-        // The OS may wait for a password indefinitely. Keep settings usable
-        // while the selected provider's single shared access attempt runs.
+        // Restore the saved setup without unlocking the credential store.
         savedSettings.current = loaded;
         setSettings(loaded);
         setOnboardingRequired(!loaded.onboardingCompleted);
@@ -182,11 +181,10 @@ function SettingsApp() {
         });
         setInitialising(false);
       }
-      // Only the active speech runtime needs a key at startup. Rendering
-      // another provider's status must not open a second Keychain prompt.
+      // Mounting a window must never request credential access.
       const [groqStatus, geminiStatus] = await Promise.all(
         (["groq", "gemini"] as const).map(async (provider) => {
-          const status = await getProviderKeyStatus(provider, loaded.transcriptionProvider === provider);
+          const status = await getProviderKeyStatus(provider, false);
           if (!disposed) setCloudStatuses((previous) => mergeProviderKeyStatuses(previous,
             previous.map((item) => item.provider === provider ? status : item)));
           return status;
@@ -202,16 +200,8 @@ function SettingsApp() {
             ? geminiStatus
             : undefined;
       if (selectedCloudSpeechStatus) {
-        setSpeechSetup((current) => current.phase !== "checking" ? current : ({
-          phase: selectedCloudSpeechStatus.configured && selectedCloudSpeechStatus.status !== "error" ? "ready" : "error",
-          modelId:
-            loaded.transcriptionProvider === "gemini"
-              ? "Gemini 3.5 Transcribe"
-              : "Groq Cloud",
-          bytesDownloaded: 0,
-          bytesTotal: 0,
-          error: selectedCloudSpeechStatus.message ?? (selectedCloudSpeechStatus.configured ? null : "Connect your selected speech provider in Voice settings."),
-        }));
+        setSpeechSetup((current) => current.phase !== "checking" ? current :
+          speechSetupFor(loaded, installed, [groqStatus, geminiStatus]));
         return;
       }
 
@@ -329,6 +319,16 @@ function SettingsApp() {
     if (!isTauri()) return;
     const unlisten = listen<RuntimeStatus>("runtime://status", (event) => {
       setRuntime(event.payload);
+      if (event.payload.state === "error" && savedSettings.current.transcriptionProvider !== "local") {
+        // Read cached status only: reporting a failure must not reopen Keychain.
+        const generation = setupGeneration.current;
+        void Promise.all([getProviderKeyStatus("groq"), getProviderKeyStatus("gemini")]).then((statuses) => {
+          setCloudStatuses((previous) => mergeProviderKeyStatuses(previous, statuses));
+          if (generation === setupGeneration.current) {
+            setSpeechSetup(speechSetupFor(savedSettings.current, installedModels.current, statuses));
+          }
+        });
+      }
     });
     return () => {
       void unlisten.then((dispose) => dispose());

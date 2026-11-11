@@ -39,7 +39,7 @@ export function MacAccessibilityNotice() {
     try {
       const allowed = await getMacosAccessibilityStatus();
       setGranted(allowed);
-      setError(allowed ? null : "Access is still off for this copy of Quill. Enable /Applications/Quill.app in System Settings, then quit and reopen Quill. If access is still denied after an update, remove only Quill from that list with the minus button, add the current app with the plus button, and enable it again.");
+      setError(allowed ? null : "Access is still off for this copy of Quill. Enable /Applications/Quill.app in System Settings, then choose Quit Quill from the menu-bar icon and reopen it. Cmd+Q keeps Quill running in the background. If access is still denied after an update, remove only Quill from that list with the minus button, add the current app with the plus button, and enable it again.");
     }
     catch (reason) { setError(String(reason)); }
     finally { setBusy(false); }
@@ -53,7 +53,7 @@ export function MacAccessibilityNotice() {
     finally { setBusy(false); }
   }
 
-  if (!isMac() || granted) return null;
+  if (!isMac() || granted || (granted === null && !error)) return null;
   return (
     <section className="settings-group" aria-label="Text insertion permission">
       <div className="setting-row">

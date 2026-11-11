@@ -17,7 +17,7 @@ export function speechSetupFor(
   const status = statuses.find((item) => item.provider === settings.transcriptionProvider);
   const unchecked = !status || status.status === "unchecked";
   return {
-    phase: unchecked ? "checking" : status.configured && status.status !== "error" ? "ready" : "error",
+    phase: unchecked ? settings.onboardingCompleted ? "ready" : "checking" : status.configured && status.status !== "error" ? "ready" : "error",
     modelId: settings.transcriptionProvider === "gemini" ? "Gemini 3.5 Transcribe" : "Groq Cloud",
     bytesDownloaded: 0, bytesTotal: 0,
     error: unchecked ? null : status.message ?? (status.configured ? null : "Connect your selected speech provider in Voice settings."),

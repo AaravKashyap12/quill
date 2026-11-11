@@ -480,6 +480,47 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn setup_macos_menu(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{PredefinedMenuItem, Submenu};
+    let background = MenuItem::with_id(
+        app,
+        "keep-running",
+        "Keep Quill Running in Background",
+        true,
+        Some("Cmd+Q"),
+    )?;
+    let app_menu = Submenu::with_items(
+        app,
+        "Quill",
+        true,
+        &[
+            &PredefinedMenuItem::about(app, None, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &background,
+        ],
+    )?;
+    // Keep Tauri's standard File/Edit/View/Window/Help menus. Replace its
+    // macOS application menu so Cmd+Q never invokes the native Quit action.
+    let menu = Menu::default(app.handle())?;
+    menu.remove_at(0)?;
+    menu.prepend(&app_menu)?;
+    app.set_menu(menu)?;
+    app.on_menu_event(|app, event| {
+        if event.id.as_ref() == "keep-running" {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.hide();
+            }
+        }
+    });
+    Ok(())
+}
+
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -612,6 +653,8 @@ pub fn run() {
         .manage(ollama::OllamaPullState::default())
         .setup(move |app| {
             setup_tray(app)?;
+            #[cfg(target_os = "macos")]
+            setup_macos_menu(app)?;
 
             #[cfg(target_os = "macos")]
             if let Err(error) = macos_overlay::configure(app) {
@@ -745,6 +788,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Quill")
         .run(|_app, _event| {
+            #[cfg(target_os = "macos")]
+            if matches!(_event, tauri::RunEvent::Reopen { .. }) {
+                show_main_window(_app);
+            }
             #[cfg(target_os = "macos")]
             if matches!(_event, tauri::RunEvent::Exit) {
                 macos_overlay::teardown();
