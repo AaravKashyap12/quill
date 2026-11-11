@@ -69,7 +69,7 @@ export interface AppSettings {
   language: string;
   transcriptionProvider: "local" | "groq" | "gemini";
   defaultRegister: Register;
-  cleanupProvider: "auto" | "ollama" | "openai-compatible" | "gemini" | "disabled";
+  cleanupProvider: "local" | "auto" | "ollama" | "openai-compatible" | "gemini" | "disabled";
   cleanupModel: string;
   cleanupBaseUrl: string;
   trailingBufferMs: number;
@@ -102,7 +102,7 @@ export interface SystemProfile {
 }
 
 export interface ProviderStatus {
-  kind: "ollama" | "openai-compatible";
+  kind: "local" | "ollama" | "openai-compatible";
   baseUrl: string;
   available: boolean;
   models: string[];

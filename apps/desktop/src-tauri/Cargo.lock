@@ -2933,6 +2933,7 @@ dependencies = [
  "core-foundation 0.10.1",
  "cpal",
  "dirs 6.0.0",
+ "getrandom 0.2.17",
  "hound",
  "keyring",
  "objc2",

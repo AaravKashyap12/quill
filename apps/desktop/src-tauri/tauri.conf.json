@@ -84,7 +84,8 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "resources/whisper/windows-x64-cpu/*"
+      "resources/whisper/windows-x64-cpu/*",
+      "resources/scribe/*"
     ],
     "targets": "all",
     "category": "Productivity",
@@ -118,7 +119,10 @@
       },
       "minimumSystemVersion": "12.0"
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "externalBin": [
+      "binaries/llama-server"
+    ]
   },
   "plugins": {
     "updater": {

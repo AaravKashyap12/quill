@@ -276,7 +276,12 @@ pub(crate) fn validate_model_file(path: &Path, id: &str) -> Result<(), String> {
     verify_model_file(path, id, expected_size(id), model_sha256(id)?)
 }
 
-fn verify_model_file(path: &Path, id: &str, size: u64, sha256: &str) -> Result<(), String> {
+pub(crate) fn verify_model_file(
+    path: &Path,
+    id: &str,
+    size: u64,
+    sha256: &str,
+) -> Result<(), String> {
     let mut file = File::open(path).map_err(|error| error.to_string())?;
     let metadata = file.metadata().map_err(|error| error.to_string())?;
     if !metadata.is_file() || metadata.len() != size {
@@ -310,10 +315,13 @@ fn verify_download_checksum(
 }
 
 fn model_file(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+    if !is_known(id) {
+        return Err(format!("unknown model: {id}"));
+    }
     Ok(user_model_dir(app)?.join(format!("ggml-{id}.bin")))
 }
 
-fn begin_download(state: &DownloadState, id: &str) -> Result<(), String> {
+pub(crate) fn begin_download(state: &DownloadState, id: &str) -> Result<(), String> {
     {
         let mut in_flight = state.in_flight.write().map_err(|e| e.to_string())?;
         if in_flight.contains(id) {
@@ -329,7 +337,7 @@ fn begin_download(state: &DownloadState, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn finish_download(state: &DownloadState, id: &str) {
+pub(crate) fn finish_download(state: &DownloadState, id: &str) {
     if let Ok(mut set) = state.in_flight.write() {
         set.remove(id);
     }
@@ -338,7 +346,7 @@ fn finish_download(state: &DownloadState, id: &str) {
     }
 }
 
-fn emit_download_complete(app: &AppHandle, id: &str, outcome: &Result<(), String>) {
+pub(crate) fn emit_download_complete(app: &AppHandle, id: &str, outcome: &Result<(), String>) {
     let (ok, error) = match outcome {
         Ok(()) => (true, None),
         Err(error) => (false, Some(error.clone())),
@@ -378,7 +386,7 @@ async fn perform_model_download(
     let destination = model_file(app, id)?;
     let temp = destination.with_extension("bin.part");
     download_to_file(
-        app,
+        |downloaded, total| emit_progress(app, id, downloaded, total),
         id,
         &model_url(id),
         expected_size(id),
@@ -392,8 +400,19 @@ async fn perform_model_download(
         .map_err(|e| e.to_string())
 }
 
-async fn download_to_file(
-    app: &AppHandle,
+pub(crate) fn emit_progress(app: &AppHandle, id: &str, bytes_downloaded: u64, bytes_total: u64) {
+    let _ = app.emit(
+        "model-download://progress",
+        ProgressEvent {
+            id: id.to_owned(),
+            bytes_downloaded,
+            bytes_total,
+        },
+    );
+}
+
+pub(crate) async fn download_to_file(
+    progress: impl Fn(u64, u64),
     id: &str,
     url: &str,
     fallback_size: u64,
@@ -401,13 +420,63 @@ async fn download_to_file(
     temp: &Path,
     cancelled: &Arc<RwLock<HashSet<String>>>,
 ) -> Result<(), String> {
-    let _ = tokio::fs::remove_file(temp).await;
-
+    // Immutable model URLs and a final checksum make retained prefixes safe.
+    // CUDA uses a moving release URL and must start fresh.
+    let mut offset = if id == CUDA_RUNTIME_ID {
+        0
+    } else {
+        tokio::fs::metadata(temp)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0)
+    };
+    if offset >= fallback_size && offset > 0 {
+        let path = temp.to_owned();
+        let name = id.to_owned();
+        let digest = expected_sha256.to_owned();
+        if tokio::task::spawn_blocking(move || {
+            verify_model_file(&path, &name, fallback_size, &digest)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .is_ok()
+        {
+            return Ok(());
+        }
+        offset = 0;
+    }
+    let mut hasher = Sha256::new();
+    if offset > 0 {
+        use tokio::io::AsyncReadExt;
+        let mut prefix = tokio::fs::File::open(temp)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut buffer = vec![0; 64 * 1024];
+        loop {
+            if is_paused(cancelled, id) {
+                return Err(paused_message(id));
+            }
+            let read = prefix.read(&mut buffer).await.map_err(|e| e.to_string())?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+    }
     let client = reqwest::Client::builder()
         .user_agent("quill-desktop/0.1 (+https://github.com/AaravKashyap12/quill)")
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
-    let mut response = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let mut request = client.get(url);
+    if offset > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={offset}-"));
+    }
+    let mut response = tokio::select! {
+        response = request.send() => response.map_err(|e| e.to_string())?,
+        () = wait_for_pause(cancelled, id) => return Err(paused_message(id)),
+    };
     if !response.status().is_success() {
         return Err(format!(
             "download failed: HTTP {} for {}",
@@ -415,42 +484,63 @@ async fn download_to_file(
             id
         ));
     }
-    let total = response.content_length().unwrap_or(fallback_size);
+    let requested_offset = offset;
+    offset = resume_offset(
+        offset,
+        response.status(),
+        response
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok()),
+    )?;
+    if offset != requested_offset {
+        hasher = Sha256::new();
+    }
+    let total = response
+        .content_length()
+        .and_then(|n| n.checked_add(offset))
+        .unwrap_or(fallback_size);
 
     // Stream to a temp file so a partial download never masquerades as installed.
     use tokio::io::AsyncWriteExt;
-    let mut file = tokio::fs::File::create(temp)
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(offset == 0)
+        .append(offset > 0)
+        .open(temp)
         .await
         .map_err(|e| e.to_string())?;
-
-    let mut received: u64 = 0;
-    let mut hasher = Sha256::new();
+    let mut received = offset;
     let mut last_emit = Instant::now();
     let throttle = Duration::from_millis(120);
 
-    while let Some(bytes) = response.chunk().await.map_err(|e| e.to_string())? {
-        if cancelled
-            .read()
-            .map(|set| set.contains(id))
-            .unwrap_or(false)
-        {
+    loop {
+        let next = tokio::select! {
+            chunk = response.chunk() => chunk.map_err(|e| e.to_string())?,
+            () = wait_for_pause(cancelled, id) => {
+                file.flush().await.map_err(|e| e.to_string())?;
+                return Err(paused_message(id));
+            }
+        };
+        let Some(bytes) = next else {
+            break;
+        };
+        if is_paused(cancelled, id) {
+            file.flush().await.map_err(|e| e.to_string())?;
+            return Err(paused_message(id));
+        }
+        if id != CUDA_RUNTIME_ID && received.saturating_add(bytes.len() as u64) > fallback_size {
             drop(file);
             let _ = tokio::fs::remove_file(temp).await;
-            return Err(format!("{id} download cancelled"));
+            return Err("Model download exceeded its expected size".to_owned());
         }
         file.write_all(&bytes).await.map_err(|e| e.to_string())?;
         hasher.update(&bytes);
         received += bytes.len() as u64;
         if last_emit.elapsed() >= throttle {
             last_emit = Instant::now();
-            let _ = app.emit(
-                "model-download://progress",
-                ProgressEvent {
-                    id: id.to_owned(),
-                    bytes_downloaded: received,
-                    bytes_total: total,
-                },
-            );
+            progress(received, total);
         }
     }
     file.flush().await.map_err(|e| e.to_string())?;
@@ -464,16 +554,60 @@ async fn download_to_file(
     )?;
 
     // Emit one final progress event so the UI reads 100% before the completion event lands.
-    let _ = app.emit(
-        "model-download://progress",
-        ProgressEvent {
-            id: id.to_owned(),
-            bytes_downloaded: received,
-            bytes_total: if total == 0 { received } else { total },
-        },
-    );
+    progress(received, if total == 0 { received } else { total });
 
     Ok(())
+}
+
+fn is_paused(cancelled: &Arc<RwLock<HashSet<String>>>, id: &str) -> bool {
+    cancelled
+        .read()
+        .map(|set| set.contains(id))
+        .unwrap_or(false)
+}
+fn paused_message(id: &str) -> String {
+    if id == CUDA_RUNTIME_ID {
+        "GPU acceleration download cancelled.".to_owned()
+    } else {
+        "Download paused. Resume to continue.".to_owned()
+    }
+}
+async fn wait_for_pause(cancelled: &Arc<RwLock<HashSet<String>>>, id: &str) {
+    while !is_paused(cancelled, id) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn resume_offset(
+    requested: u64,
+    status: reqwest::StatusCode,
+    content_range: Option<&str>,
+) -> Result<u64, String> {
+    if status == reqwest::StatusCode::OK {
+        return Ok(0);
+    }
+    if status != reqwest::StatusCode::PARTIAL_CONTENT {
+        return Err("Unexpected model download response".to_owned());
+    }
+    let parsed = content_range
+        .and_then(|value| value.strip_prefix("bytes "))
+        .and_then(|value| value.split_once('/'))
+        .and_then(|(range, total)| {
+            range
+                .split_once('-')
+                .map(|(start, end)| (start, end, total))
+        })
+        .and_then(|(start, end, total)| {
+            Some((
+                start.parse::<u64>().ok()?,
+                end.parse::<u64>().ok()?,
+                total.parse::<u64>().ok()?,
+            ))
+        });
+    match parsed {
+        Some((start, end, total)) if start == requested && start <= end && end < total => Ok(start),
+        _ => Err("The server returned an invalid resume range. Retry the download.".to_owned()),
+    }
 }
 
 fn parse_sha256_file(contents: &str) -> Result<String, String> {
@@ -495,6 +629,8 @@ fn parse_sha256_file(contents: &str) -> Result<String, String> {
 async fn fetch_cuda_checksum() -> Result<String, String> {
     let response = reqwest::Client::builder()
         .user_agent("quill-desktop/0.1 (+https://github.com/AaravKashyap12/quill)")
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(30))
         .build()
         .map_err(|error| error.to_string())?
         .get(format!("{CUDA_RELEASE_BASE_URL}/{CUDA_ASSET_NAME}.sha256"))
@@ -635,7 +771,7 @@ async fn perform_cuda_download(
         .map_err(|error| error.to_string())?;
     let archive_path = parent.join(format!(".{CUDA_ASSET_NAME}.part"));
     download_to_file(
-        app,
+        |downloaded, total| emit_progress(app, CUDA_RUNTIME_ID, downloaded, total),
         CUDA_RUNTIME_ID,
         &format!("{CUDA_RELEASE_BASE_URL}/{CUDA_ASSET_NAME}"),
         CUDA_RUNTIME_DOWNLOAD_BYTES,
@@ -739,23 +875,232 @@ pub fn delete_cuda_runtime(app: AppHandle, state: State<'_, DownloadState>) -> R
 
 #[tauri::command]
 pub fn cancel_whisper_download(state: State<'_, DownloadState>, id: String) -> Result<(), String> {
+    if !is_known(&id) {
+        return Err(format!("unknown model: {id}"));
+    }
     let mut cancelled = state.cancelled.write().map_err(|e| e.to_string())?;
     cancelled.insert(id);
     Ok(())
 }
 
 #[tauri::command]
-pub fn delete_whisper_model(app: AppHandle, id: String) -> Result<(), String> {
+pub fn delete_whisper_model(
+    app: AppHandle,
+    state: State<'_, DownloadState>,
+    id: String,
+) -> Result<(), String> {
     let path = model_file(&app, &id)?;
-    if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    begin_download(&state, &id)?;
+    let outcome = (|| {
+        for file in [&path, &path.with_extension("bin.part")] {
+            match std::fs::remove_file(file) {
+                Ok(()) => (),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        Ok(())
+    })();
+    finish_download(&state, &id);
+    outcome
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn retained_prefix_resumes_and_ignored_range_restarts_safely() {
+        for resume in [true, false] {
+            let dir = runtime_fixture(if resume {
+                "resume-transfer"
+            } else {
+                "restart-transfer"
+            });
+            let path = dir.join("model.part");
+            std::fs::write(&path, b"hello ").unwrap();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/model", listener.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0];
+                while !request.ends_with(b"\r\n\r\n") {
+                    stream.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                }
+                assert!(String::from_utf8(request)
+                    .unwrap()
+                    .to_lowercase()
+                    .contains("range: bytes=6-"));
+                let response = if resume {
+                    "HTTP/1.1 206 Partial Content\r\nContent-Length: 5\r\nContent-Range: bytes 6-10/11\r\nConnection: close\r\n\r\nworld"
+                } else {
+                    "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\nhello world"
+                };
+                stream.write_all(response.as_bytes()).unwrap();
+            });
+            let checksum = format!("{:x}", Sha256::digest(b"hello world"));
+            let cancelled = Arc::new(RwLock::new(HashSet::new()));
+            download_to_file(
+                |_, _| (),
+                "test-model",
+                &url,
+                11,
+                &checksum,
+                &path,
+                &cancelled,
+            )
+            .await
+            .unwrap();
+            server.join().unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), b"hello world");
+            // A complete retained file is verified locally, without any server.
+            download_to_file(
+                |_, _| (),
+                "test-model",
+                "http://127.0.0.1:1",
+                11,
+                &checksum,
+                &path,
+                &cancelled,
+            )
+            .await
+            .unwrap();
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn paused_transfer_retains_prefix_and_bad_checksum_removes_it() {
+        for paused in [true, false] {
+            let dir = runtime_fixture(if paused {
+                "paused-transfer"
+            } else {
+                "bad-transfer"
+            });
+            let path = dir.join("model.part");
+            std::fs::write(&path, b"hello ").unwrap();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/model", listener.local_addr().unwrap());
+            let cancelled = Arc::new(RwLock::new(HashSet::new()));
+            let server_cancelled = Arc::clone(&cancelled);
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0];
+                while !request.ends_with(b"\r\n\r\n") {
+                    stream.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                }
+                if paused {
+                    server_cancelled
+                        .write()
+                        .unwrap()
+                        .insert("test-model".to_owned());
+                }
+                let sent = stream.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 5\r\nContent-Range: bytes 6-10/11\r\nConnection: close\r\n\r\nworld");
+                if !paused {
+                    sent.unwrap();
+                }
+            });
+            let error = download_to_file(
+                |_, _| (),
+                "test-model",
+                &url,
+                11,
+                &"0".repeat(64),
+                &path,
+                &cancelled,
+            )
+            .await
+            .unwrap_err();
+            server.join().unwrap();
+            if paused {
+                assert!(error.contains("paused"));
+                assert_eq!(std::fs::read(&path).unwrap(), b"hello ");
+            } else {
+                assert!(error.contains("SHA-256"));
+                assert!(!path.exists());
+            }
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn pause_interrupts_a_server_that_never_sends_headers() {
+        let dir = runtime_fixture("stalled-download");
+        let path = dir.join("model.part");
+        std::fs::write(&path, b"saved").unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/model", listener.local_addr().unwrap());
+        let cancelled = Arc::new(RwLock::new(HashSet::new()));
+        let server_cancelled = Arc::clone(&cancelled);
+        let (done, finish) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut byte = [0];
+            while !request.ends_with(b"\r\n\r\n") {
+                stream.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
+            server_cancelled
+                .write()
+                .unwrap()
+                .insert("test-model".to_owned());
+            finish.recv_timeout(Duration::from_secs(3)).unwrap();
+        });
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(2),
+            download_to_file(
+                |_, _| (),
+                "test-model",
+                &url,
+                10,
+                &"0".repeat(64),
+                &path,
+                &cancelled,
+            ),
+        )
+        .await;
+        done.send(()).unwrap();
+        server.join().unwrap();
+        assert!(outcome
+            .expect("pause must not wait for server headers")
+            .unwrap_err()
+            .contains("paused"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"saved");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn resumed_download_requires_an_exact_range() {
+        use reqwest::StatusCode;
+        assert_eq!(
+            resume_offset(10, StatusCode::PARTIAL_CONTENT, Some("bytes 10-19/20")),
+            Ok(10)
+        );
+        assert_eq!(resume_offset(10, StatusCode::OK, None), Ok(0));
+        for header in [
+            None,
+            Some("bytes 0-19/20"),
+            Some("bytes 10-20/20"),
+            Some("bytes 10-9/20"),
+            Some("bytes 10-19/*"),
+        ] {
+            assert!(resume_offset(10, StatusCode::PARTIAL_CONTENT, header).is_err());
+        }
+    }
 
     fn runtime_fixture(revision: &str) -> PathBuf {
         let nonce = SystemTime::now()

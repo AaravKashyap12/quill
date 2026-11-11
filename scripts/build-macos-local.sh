@@ -22,8 +22,10 @@ fi
 # Sign nested executable code first, then bind the executable, Info.plist, and
 # resources as one app. The Rust linker's executable-only signature is not a
 # valid bundle signature and must not be used for macOS permission testing.
-codesign --force --sign - --identifier "$bundle_id.whisper-server" \
-  "$app_bundle/Contents/MacOS/whisper-server"
+for helper in whisper-server llama-server; do
+  codesign --force --sign - --identifier "$bundle_id.$helper" \
+    "$app_bundle/Contents/MacOS/$helper"
+done
 codesign --force --sign - --identifier "$bundle_id" --options runtime \
   --entitlements "$repo_root/apps/desktop/src-tauri/Entitlements.plist" "$app_bundle"
 python3 "$repo_root/scripts/verify_macos_bundle.py" "$app_bundle"

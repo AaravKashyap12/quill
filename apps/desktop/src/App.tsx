@@ -585,6 +585,7 @@ function SettingsApp() {
         onStartSpeech={startOnboardingSpeech}
         onRetrySpeech={() => void startSpeechDownload()}
         onConnectCloud={connectOnboardingCloud}
+        onModelsChanged={() => void refreshProviders()}
         onFinish={finishOnboarding}
       />
     );

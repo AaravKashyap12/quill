@@ -106,7 +106,7 @@ export function cleanupProviderForSetup(
 ): AppSettings["cleanupProvider"] {
   if (route === "gemini") return "gemini";
   if (route === "disabled") return "disabled";
-  return "auto";
+  return "local";
 }
 
 export function describeSetupPath(

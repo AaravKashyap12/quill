@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
+import { LocalScribeModel } from "../components/LocalScribeModel";
 import { LanguageCombobox } from "../components/LanguageCombobox";
 import { detectPlatform } from "../platform";
 import { ProviderBadge } from "../components/ProviderBadge";
@@ -439,7 +440,7 @@ export function VoiceView({
     settings.styleProfiles[0]?.targetApp ?? "generic",
   );
   const platform = useMemo(detectPlatform, []);
-  const availableProvider = providers.find((provider) => provider.available);
+  const availableProvider = providers.find((provider) => provider.kind !== "local" && provider.available);
   const selectedStyleProfile = settings.styleProfiles.find(
     (profile) => profile.targetApp === styleTarget,
   ) ?? emptyStyleProfile(styleTarget);
@@ -1085,7 +1086,7 @@ export function VoiceView({
                                     className="link-button"
                                     onClick={() => cancelDownload(model.id)}
                                   >
-                                    Cancel
+                                    Pause
                                   </button>
                                 </div>
                               </div>
@@ -1112,7 +1113,7 @@ export function VoiceView({
                                 onClick={() => startDownload(model.id)}
                               >
                                 <Download size={12} strokeWidth={2} />
-                                Download
+                                Download / resume
                               </button>
                             )}
                             {error ? (
@@ -1240,7 +1241,9 @@ export function VoiceView({
           <h2 id="scribe-title">Scribe cleanup</h2>
           <ProviderBadge
             state={
-              settings.cleanupProvider === "gemini"
+              settings.cleanupProvider === "local"
+                ? providers.some((p) => p.kind === "local" && p.available) ? "available" : "unavailable"
+                : settings.cleanupProvider === "gemini"
                 ? cloudStatuses.some((status) => status.provider === "gemini" && status.status === "connected")
                   ? "available"
                   : cloudStatuses.find((status) => status.provider === "gemini")?.status === "unchecked"
@@ -1249,7 +1252,9 @@ export function VoiceView({
                 : checking ? "checking" : availableProvider ? "available" : "unavailable"
             }
             label={
-              settings.cleanupProvider === "gemini"
+              settings.cleanupProvider === "local"
+                ? providers.some((p) => p.kind === "local" && p.available) ? "Offline Scribe ready" : "Model download needed"
+                : settings.cleanupProvider === "gemini"
                 ? cloudStatuses.find((status) => status.provider === "gemini")?.status === "connected"
                   ? "Gemini connected"
                   : cloudStatuses.find((status) => status.provider === "gemini")?.status === "unchecked"
@@ -1271,7 +1276,9 @@ export function VoiceView({
             <SettingRow
               label="Provider"
               description={
-                settings.cleanupProvider === "gemini"
+                settings.cleanupProvider === "local"
+                  ? "Download once, then refine drafts offline inside Quill."
+                  : settings.cleanupProvider === "gemini"
                   ? "Gemini Flash-Lite cleans the transcript in the cloud only after you finish."
                   : availableProvider
                   ? "Auto-detect matches whichever local server is running."
@@ -1288,12 +1295,14 @@ export function VoiceView({
                     )
                   }
                 >
-                  <option value="auto">Auto-detect local server</option>
+                  <option value="local">Offline · built into Quill</option>
+                  <option value="auto">Advanced · auto-detect local server</option>
                   <option value="ollama">Ollama</option>
                   <option value="openai-compatible">OpenAI-compatible</option>
                   <option value="gemini">Gemini Cloud · Flash-Lite</option>
                   <option value="disabled">Disabled</option>
                 </select>
+                {["auto", "ollama", "openai-compatible"].includes(settings.cleanupProvider) ? (
                 <button
                   className="icon-button"
                   type="button"
@@ -1303,8 +1312,10 @@ export function VoiceView({
                 >
                   <RefreshCw size={16} className={checking ? "is-spinning" : ""} />
                 </button>
+                ) : null}
               </div>
             </SettingRow>
+            {settings.cleanupProvider === "local" ? <LocalScribeModel onChange={() => void onDetectProviders()} /> : null}
             {settings.cleanupProvider === "gemini" && settings.transcriptionProvider !== "gemini" ? (
               <SettingRow
                 label="Gemini connection"
@@ -1313,7 +1324,7 @@ export function VoiceView({
                 {cloudKeyControl("gemini")}
               </SettingRow>
             ) : null}
-            {settings.cleanupProvider !== "gemini" && settings.cleanupProvider !== "disabled" ? (
+            {settings.cleanupProvider !== "local" && settings.cleanupProvider !== "gemini" && settings.cleanupProvider !== "disabled" ? (
             <details className="model-guide" open={!availableProvider}>
               <summary>Compare and install local servers</summary>
               <div className="model-guide-scroll">
@@ -1365,7 +1376,7 @@ export function VoiceView({
             </details>
             ) : null}
           </div>
-          {settings.cleanupProvider !== "gemini" && settings.cleanupProvider !== "disabled" ? (
+          {settings.cleanupProvider !== "local" && settings.cleanupProvider !== "gemini" && settings.cleanupProvider !== "disabled" ? (
           <div className="model-setting">
             <SettingRow
               label="Cleanup model"
@@ -1383,7 +1394,7 @@ export function VoiceView({
                 disabled={!availableProvider}
               >
                 <option value="" disabled>Choose a cleanup model</option>
-                {providers.flatMap((provider) =>
+                {providers.filter((p) => p.kind !== "local").flatMap((provider) =>
                   provider.models.map((model) => (
                     <option value={model} key={`${provider.kind}-${model}`}>
                       {cleanupModelLabel(model)}

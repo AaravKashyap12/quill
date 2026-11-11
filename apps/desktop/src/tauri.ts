@@ -302,3 +302,19 @@ export async function discardRecovery(id: string): Promise<void> {
   if (!isTauri()) return;
   await invoke("discard_recovery", { id });
 }
+
+export interface LocalScribeStatus {
+  installed: boolean;
+  downloadBytes: number;
+  partialBytes: number;
+  downloading: boolean;
+  engineAvailable: boolean;
+  engineError: string | null;
+}
+export async function getLocalScribeStatus(): Promise<LocalScribeStatus> {
+  if (!isTauri()) return { installed: false, downloadBytes: 2497281120, partialBytes: 0, downloading: false, engineAvailable: false, engineError: "Open Quill on your desktop to download offline Scribe." };
+  return invoke<LocalScribeStatus>("get_local_scribe_status");
+}
+export async function downloadLocalScribe(): Promise<void> { await invoke("download_local_scribe"); }
+export async function pauseLocalScribe(): Promise<void> { await invoke("pause_local_scribe"); }
+export async function deleteLocalScribe(): Promise<void> { await invoke("delete_local_scribe"); }
