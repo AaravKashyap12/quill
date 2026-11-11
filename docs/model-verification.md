@@ -30,7 +30,7 @@ was fetched on 2026-10-22; no model weights were downloaded to obtain it.
 - Downloads use commit-specific URLs and stream SHA-256 while writing a `.part`
   file. Only a matching digest can be renamed into the installed `.bin` path.
   A checksum mismatch removes the partial file. Interrupted transport can leave
-  a `.part` file; it is not an installed model and is replaced on retry.
+  a `.part` file; it is not an installed model. Retry requests the remaining bytes, rehashes the prefix, and verifies the complete digest before installation. A server ignoring Range causes a clean restart. Pause retains the prefix; removing a model also removes its partial download.
 - Before each local speech-engine startup, Quill checks the selected installed
   file's size and SHA-256 on a blocking worker. This includes legacy downloads
   and both bundled model layouts. Invalid files are refused with a remove-and-
@@ -51,3 +51,19 @@ To update a pin, fetch the upstream metadata for a specific revision, compare
 its LFS `sha256` and `size`, update the registry and revision together, and run
 the download/installed-model regression tests. Do not copy a digest from an
 untrusted mirror or substitute the metadata response's `blobId`.
+
+## Offline Scribe
+
+The optional Qwen3 4B Instruct 2507 Q4_K_M download is pinned to
+`unsloth/Qwen3-4B-Instruct-2507-GGUF` revision
+`a06e946bb6b655725eafa393f4a9745d460374c9`.
+File: `Qwen3-4B-Instruct-2507-Q4_K_M.gguf`; bytes: `2497281120`;
+SHA-256: `3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597`.
+The model uses Apache-2.0; the bundled llama.cpp engine uses MIT. Notices are in
+`apps/desktop/src-tauri/resources/scribe`. The engine is built from v0.9.0,
+commit `cd959bae99ff4bed22bef2604f45241c09bbb8c8`, by `scripts/build-scribe.py`.
+The same download integrity/resume rules apply. The model is checked on a blocking worker before first use in each process.
+A successful check is reused only while its path, size and modification time match. It is never bundled
+with the installer or fetched automatically at startup.
+
+Metadata: [Hugging Face LFS objects](https://huggingface.co/api/models/unsloth/Qwen3-4B-Instruct-2507-GGUF/revision/a06e946bb6b655725eafa393f4a9745d460374c9?blobs=true).

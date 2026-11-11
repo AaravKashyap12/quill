@@ -7,6 +7,7 @@ mod dictionary;
 mod downloads;
 mod hotkeys;
 mod injection;
+mod local_scribe;
 #[cfg(target_os = "macos")]
 mod macos_overlay;
 mod metrics;
@@ -210,11 +211,12 @@ async fn detect_local_providers(
     // Snapshot settings synchronously — State's lock isn't held across the
     // await below (Tauri would refuse to compile that anyway).
     let settings_snapshot = state.settings.read().ok().map(|s| s.clone());
-    let providers = cleanup::detect_providers().await;
+    let mut providers = cleanup::detect_providers().await;
+    providers.insert(0, local_scribe::provider_status());
     // If a local provider just became available (typically Ollama coming online
     // after we started), pre-warm the configured cleanup model so the next
     // Scribe call doesn't take 30s+ to return.
-    if providers.iter().any(|p| p.available) {
+    if providers.iter().any(|p| p.kind != "local" && p.available) {
         if let Some(settings) = settings_snapshot {
             tauri::async_runtime::spawn(async move {
                 cleanup::warm_up(settings).await;
@@ -480,6 +482,47 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn setup_macos_menu(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{PredefinedMenuItem, Submenu};
+    let background = MenuItem::with_id(
+        app,
+        "keep-running",
+        "Keep Quill Running in Background",
+        true,
+        Some("Cmd+Q"),
+    )?;
+    let app_menu = Submenu::with_items(
+        app,
+        "Quill",
+        true,
+        &[
+            &PredefinedMenuItem::about(app, None, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &background,
+        ],
+    )?;
+    // Keep Tauri's standard File/Edit/View/Window/Help menus. Replace its
+    // macOS application menu so Cmd+Q never invokes the native Quit action.
+    let menu = Menu::default(app.handle())?;
+    menu.remove_at(0)?;
+    menu.prepend(&app_menu)?;
+    app.set_menu(menu)?;
+    app.on_menu_event(|app, event| {
+        if event.id.as_ref() == "keep-running" {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.hide();
+            }
+        }
+    });
+    Ok(())
+}
+
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -611,7 +654,10 @@ pub fn run() {
         .manage(downloads::DownloadState::default())
         .manage(ollama::OllamaPullState::default())
         .setup(move |app| {
+            local_scribe::initialise(app.handle())?;
             setup_tray(app)?;
+            #[cfg(target_os = "macos")]
+            setup_macos_menu(app)?;
 
             #[cfg(target_os = "macos")]
             if let Err(error) = macos_overlay::configure(app) {
@@ -733,6 +779,10 @@ pub fn run() {
             review::regenerate_scribe_review,
             review::accept_scribe_review,
             review::discard_scribe_review,
+            local_scribe::get_local_scribe_status,
+            local_scribe::download_local_scribe,
+            local_scribe::pause_local_scribe,
+            local_scribe::delete_local_scribe,
             downloads::download_whisper_model,
             downloads::cancel_whisper_download,
             downloads::delete_whisper_model,
@@ -745,6 +795,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Quill")
         .run(|_app, _event| {
+            if matches!(_event, tauri::RunEvent::Exit) {
+                local_scribe::shutdown();
+            }
+            #[cfg(target_os = "macos")]
+            if matches!(_event, tauri::RunEvent::Reopen { .. }) {
+                show_main_window(_app);
+            }
             #[cfg(target_os = "macos")]
             if matches!(_event, tauri::RunEvent::Exit) {
                 macos_overlay::teardown();

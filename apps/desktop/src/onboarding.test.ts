@@ -53,7 +53,7 @@ describe("first-run speech model recommendation", () => {
 describe("first-run provider choices", () => {
   it("maps setup choices to persisted cleanup providers", () => {
     expect(cleanupProviderForSetup("disabled")).toBe("disabled");
-    expect(cleanupProviderForSetup("local")).toBe("auto");
+    expect(cleanupProviderForSetup("local")).toBe("local");
     expect(cleanupProviderForSetup("gemini")).toBe("gemini");
   });
 

@@ -52,7 +52,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 it("checks passively on mount and focus; only Enable requests OS consent", async () => {
-  render();
+  expect(render()).toBeNull();
   const cleanups = harness.effects.splice(0).map((effect) => effect());
   await vi.waitFor(() => expect(native.getMacosAccessibilityStatus).toHaveBeenCalledOnce());
   expect(native.requestMacosAccessibility).not.toHaveBeenCalled();
@@ -80,17 +80,24 @@ it("does not query or request Mac permissions on Windows", () => {
 });
 
 it("explains how to recover when Check access still reports denied", async () => {
+  render();
+  for (const effect of harness.effects.splice(0)) effect();
+  await vi.waitFor(() => expect(render()).not.toBeNull());
   await button(render()).onClick();
   await button(render()).onClick();
   const html = renderToStaticMarkup(render());
   expect(html).toContain("Access is still off for this copy of Quill.");
   expect(html).toContain("/Applications/Quill.app");
-  expect(html).toContain("quit and reopen Quill");
+  expect(html).toContain("Quit Quill from the menu-bar icon");
+  expect(html).toContain("Cmd+Q keeps Quill running in the background");
   expect(html).toContain("remove only Quill");
   expect(native.requestMacosAccessibility).toHaveBeenCalledOnce();
 });
 
 it("reopens System Settings without repeating the consent prompt and reports open failures", async () => {
+  render();
+  for (const effect of harness.effects.splice(0)) effect();
+  await vi.waitFor(() => expect(render()).not.toBeNull());
   await button(render()).onClick();
   await button(render(), "Open System Settings").onClick();
   expect(native.openMacosAccessibilitySettings).toHaveBeenCalledOnce();
