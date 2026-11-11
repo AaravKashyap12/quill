@@ -21,7 +21,7 @@ pnpm typecheck
 pnpm build
 ```
 
-If Rust is installed:
+Use Rust 1.90 or newer (required by the updater dependency):
 
 ```powershell
 cd apps/desktop/src-tauri

@@ -536,7 +536,10 @@ fn install_cuda_archive(
         let mut entry = archive
             .by_index(index)
             .map_err(|_| "CUDA runtime archive entry could not be read".to_owned())?;
-        let name = entry.name().replace('\\', "/");
+        let name = entry
+            .name()
+            .map_err(|_| "CUDA runtime archive entry has an invalid name".to_owned())?
+            .replace('\\', "/");
         if entry.is_dir() || name.contains('/') || !allowed.contains(name.as_str()) {
             return Err("CUDA runtime archive contains an unexpected entry".to_owned());
         }
@@ -889,6 +892,72 @@ mod tests {
         let error = validate_cuda_runtime(&mismatched).expect_err("mismatch should be refused");
         assert_eq!(error, CUDA_VERSION_MISMATCH_MESSAGE);
         std::fs::remove_dir_all(&mismatched).expect("mismatched fixture should be removed");
+    }
+
+    fn cuda_archive_fixture(compression: zip::CompressionMethod) -> (PathBuf, PathBuf) {
+        let source = runtime_fixture(WHISPER_REVISION);
+        let archive_path = source.join("runtime.zip");
+        let mut archive = zip::ZipWriter::new(File::create(&archive_path).unwrap());
+        let options = zip::write::SimpleFileOptions::default().compression_method(compression);
+        for name in REQUIRED_CUDA_FILES {
+            archive.start_file(*name, options).unwrap();
+            archive
+                .write_all(&std::fs::read(source.join(name)).unwrap())
+                .unwrap();
+        }
+        archive.finish().unwrap();
+        (source, archive_path)
+    }
+
+    #[test]
+    fn cuda_archive_upgrade_preserves_stored_and_deflated_pack_installation() {
+        for compression in [
+            zip::CompressionMethod::Stored,
+            zip::CompressionMethod::Deflated,
+        ] {
+            let (root, archive) = cuda_archive_fixture(compression);
+            let staging = root.join("staging");
+            let destination = root.join("installed");
+            let cancelled = Arc::new(RwLock::new(HashSet::new()));
+            assert_eq!(
+                install_cuda_archive(&archive, &staging, &destination, &cancelled),
+                Ok(())
+            );
+            assert_eq!(validate_cuda_runtime(&destination), Ok(()));
+            assert!(!staging.exists());
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn cuda_archive_rejects_unexpected_paths_without_replacing_existing_runtime() {
+        for name in ["../escape.dll", "nested/ggml-cuda.dll", "unexpected.dll"] {
+            let root = runtime_fixture(WHISPER_REVISION);
+            let archive_path = root.join("runtime.zip");
+            let mut archive = zip::ZipWriter::new(File::create(&archive_path).unwrap());
+            archive
+                .start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            archive.write_all(b"untrusted").unwrap();
+            archive.finish().unwrap();
+            let destination = root.join("installed");
+            std::fs::create_dir(&destination).unwrap();
+            std::fs::write(destination.join("keep"), b"existing").unwrap();
+            let cancelled = Arc::new(RwLock::new(HashSet::new()));
+            assert!(install_cuda_archive(
+                &archive_path,
+                &root.join("staging"),
+                &destination,
+                &cancelled
+            )
+            .is_err());
+            assert_eq!(
+                std::fs::read(destination.join("keep")).unwrap(),
+                b"existing"
+            );
+            assert!(!root.join("escape.dll").exists());
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]
