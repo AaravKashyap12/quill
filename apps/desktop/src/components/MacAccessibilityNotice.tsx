@@ -39,7 +39,7 @@ export function MacAccessibilityNotice() {
     try {
       const allowed = await getMacosAccessibilityStatus();
       setGranted(allowed);
-      setError(allowed ? null : "Access is still off for this copy of Quill. Enable /Applications/Quill.app in System Settings, then choose Quit Quill from the menu-bar icon and reopen it. Cmd+Q keeps Quill running in the background. If access is still denied after an update, remove only Quill from that list with the minus button, add the current app with the plus button, and enable it again.");
+      setError(allowed ? null : "Access is still off for this copy of Quill. Enable /Applications/Quill.app in macOS privacy settings, then choose Quit Quill from the menu-bar icon and reopen it. Cmd+Q keeps Quill running in the background. If access is still denied after an update, remove only Quill from that list with the minus button, add the current app with the plus button, and enable it again.");
     }
     catch (reason) { setError(String(reason)); }
     finally { setBusy(false); }
@@ -60,14 +60,14 @@ export function MacAccessibilityNotice() {
         <div className="setting-copy">
           <strong className="setting-label">Allow text insertion</strong>
           <p className="setting-description">Quill uses Accessibility to insert into your original text field.</p>
-          {requested && <p className="setting-description" role="status">Enable Quill in System Settings → Privacy &amp; Security → Accessibility (Device Control and Data Access on some macOS versions), then return here.</p>}
+          {requested && <p className="setting-description" role="status">Enable Quill under Accessibility: System Preferences → Security &amp; Privacy → Privacy on Monterey, or System Settings → Privacy &amp; Security on Ventura and later (Device Control and Data Access if your version uses that label). Then return here.</p>}
           {error && <p className="setting-description" role="alert">{error}</p>}
         </div>
         <div className="inline-control permission-actions">
           <button type="button" className="row-download-button" disabled={busy} onClick={requested ? recheck : enable}>
             {requested ? "Check access" : "Enable text insertion"}
           </button>
-          {requested && <button type="button" className="row-download-button" disabled={busy} onClick={openSettings}>Open System Settings</button>}
+          {requested && <button type="button" className="row-download-button" disabled={busy} onClick={openSettings}>Open privacy settings</button>}
         </div>
       </div>
     </section>

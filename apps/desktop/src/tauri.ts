@@ -117,7 +117,7 @@ export async function requestMacosAccessibility(): Promise<boolean> {
 }
 
 export async function openMacosAccessibilitySettings(): Promise<void> {
-  if (!isTauri()) throw new Error("Open System Settings → Privacy & Security → Accessibility on your Mac.");
+  if (!isTauri()) throw new Error("Open your Mac’s privacy settings and enable Quill’s Accessibility access. Use System Preferences on Monterey or System Settings on Ventura and later.");
   await invoke("open_macos_accessibility_settings");
 }
 
