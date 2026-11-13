@@ -61,11 +61,18 @@ release and verifies its SHA-256. It installs the same universal app for Apple
 Silicon and Intel. Mac builds remain an engineering preview; see the
 [hardware verification record](docs/macos-verification.md).
 
-Quill is ad-hoc signed, not Apple-notarized. If macOS blocks first launch, use
-**System Settings → Privacy & Security → Open Anyway**. Setup needs Microphone
+Quill is ad-hoc signed, not Apple-notarized. If macOS blocks a trusted download,
+follow [Apple’s per-app opening instructions](https://support.apple.com/en-us/102445)
+for your macOS version; do not disable Gatekeeper. Setup needs Microphone
 access to record and Accessibility access to insert. Homebrew does not grant
 permissions or bypass macOS security. Quit Quill before replacing an existing
 installation. Uninstalling the cask preserves settings, models and saved keys.
+
+For permission settings, use **System Preferences → Security & Privacy → Privacy**
+on Monterey (macOS 12), or **System Settings → Privacy & Security** on Ventura
+and later. Select Microphone or Accessibility as needed. See the
+[Mac tester guide](docs/macos-testing.md) for details. These navigation instructions
+do not establish compatibility with Monterey; Mac builds remain unsupported.
 
 To update a Homebrew-managed installation (including apps with their own updater):
 

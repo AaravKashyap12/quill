@@ -94,15 +94,19 @@ it("explains how to recover when Check access still reports denied", async () =>
   expect(native.requestMacosAccessibility).toHaveBeenCalledOnce();
 });
 
-it("reopens System Settings without repeating the consent prompt and reports open failures", async () => {
+it("reopens privacy settings without repeating the consent prompt and reports open failures", async () => {
   render();
   for (const effect of harness.effects.splice(0)) effect();
   await vi.waitFor(() => expect(render()).not.toBeNull());
   await button(render()).onClick();
-  await button(render(), "Open System Settings").onClick();
+  const help = renderToStaticMarkup(render());
+  expect(help).toContain("System Preferences");
+  expect(help).toContain("Monterey");
+  expect(help).toContain("Ventura and later");
+  await button(render(), "Open privacy settings").onClick();
   expect(native.openMacosAccessibilitySettings).toHaveBeenCalledOnce();
   expect(native.requestMacosAccessibility).toHaveBeenCalledOnce();
   vi.mocked(native.openMacosAccessibilitySettings).mockRejectedValueOnce(new Error("Settings could not open"));
-  await button(render(), "Open System Settings").onClick();
+  await button(render(), "Open privacy settings").onClick();
   expect(renderToStaticMarkup(render())).toContain("Settings could not open");
 });

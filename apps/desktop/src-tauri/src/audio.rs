@@ -8,7 +8,7 @@ pub const VISUALIZER_BARS: usize = 12;
 
 #[cfg(target_os = "macos")]
 const MICROPHONE_HELP: &str =
-    "Open System Settings → Privacy & Security → Microphone, enable Quill, then try again.";
+    "Enable Quill under Microphone in macOS privacy settings: System Preferences → Security & Privacy → Privacy on Monterey, or System Settings → Privacy & Security on Ventura and later. Then try again.";
 #[cfg(not(target_os = "macos"))]
 const MICROPHONE_HELP: &str =
     "Check that a microphone is connected and allowed for Quill, then try again.";
