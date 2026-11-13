@@ -94,7 +94,7 @@ pub(crate) fn detect_speech_window(samples: &[f32]) -> Option<SpeechWindow> {
 
     let mut vad = Vad::new_with_rate_and_mode(SampleRate::Rate16kHz, VadMode::Quality);
     let mut voiced = Vec::with_capacity(samples.len() / FRAME_SAMPLES);
-    for frame in samples.chunks_exact(FRAME_SAMPLES) {
+    for frame in samples.as_chunks::<FRAME_SAMPLES>().0 {
         let pcm = frame
             .iter()
             .map(|sample| (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16)
