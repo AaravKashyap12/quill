@@ -769,7 +769,7 @@ fn ensure_accessibility_permission() -> Result<()> {
         return Ok(());
     }
     Err(anyhow!(
-        "macOS Accessibility permission is required for Quill to type into other apps. Open System Settings → Privacy & Security → Accessibility, enable Quill, then try again."
+        "macOS Accessibility permission is required for Quill to type into other apps. Enable Quill under Accessibility in macOS privacy settings: System Preferences → Security & Privacy → Privacy on Monterey, or System Settings → Privacy & Security on Ventura and later (Device Control and Data Access if your version uses that label). Then try again."
     ))
 }
 

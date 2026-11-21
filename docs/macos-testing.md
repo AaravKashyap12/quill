@@ -25,16 +25,27 @@ Developer ID signing or notarization. Keep one installed copy while testing.
 1. Download a preview artifact from the repository's Actions run or Releases,
    or build from source, and move Quill to Applications.
 2. Downloaded builds are not Developer ID signed or notarized. If macOS blocks
-   opening a trusted Quill artifact, use **System Settings → Privacy & Security
-   → Open Anyway**, then confirm Open. Follow [Apple's per-app instructions](https://support.apple.com/en-us/102445);
-   do not disable Gatekeeper or strip quarantine as a setup step.
+   opening a trusted Quill artifact, follow [Apple's per-app instructions](https://support.apple.com/en-us/102445)
+   for your macOS version; do not disable Gatekeeper or strip quarantine as a setup step.
 3. Quill needs **Microphone** to record and **Accessibility** to insert into the
    original text field. In the repaired source, General and onboarding offer
    **Enable text insertion**; startup only checks access. After enabling Quill
-   in Privacy & Security → Accessibility (**Device Control and Data Access** on
-   macOS 27), return to Quill or click **Check access**. Microphone consent is
+   in the appropriate privacy pane below, return to Quill or click **Check access**.
+   Microphone consent is
    requested by macOS on first recording. A missing permission produces an
    actionable error rather than a successful insertion result.
+
+Permission settings differ by macOS version:
+
+- **Monterey (12):** System Preferences → Security & Privacy → Privacy →
+  Microphone or Accessibility.
+- **Ventura and later:** System Settings → Privacy & Security → Microphone or
+  Accessibility. If your version labels the insertion control **Device Control
+  and Data Access**, use that control for Quill.
+
+Sources: [Apple microphone permissions](https://support.apple.com/en-us/102071)
+and [Apple’s Monterey Accessibility guide](https://support.apple.com/guide/mac-help/allow-accessibility-apps-to-access-your-mac-mh43185/12.0/mac/12.0).
+These are navigation instructions, not a Monterey runtime-verification result.
 
 The current Fn path does not explicitly request Input Monitoring. Do not add
 Screen Recording, Full Disk Access, or Automation permissions for core dictation.
@@ -79,8 +90,9 @@ recording before starting Scribe. Other sampled keys suppress or cancel a hold.
 General settings offers **Control + Option** and **Command + Control + Option**
 presets for keyboards without a physical Apple Fn key, as well as custom chords.
 Control + Option can conflict with VoiceOver; choose a custom binding if needed.
-If Fn opens emoji or macOS Dictation, set System Settings → Keyboard →
-"Press 🌐 key to" to "Do Nothing" if you want to reserve it for Quill.
+If Fn opens emoji or macOS Dictation, open Keyboard in System Preferences
+(Monterey) or System Settings (Ventura and later). Set "Press 🌐 key to"
+to "Do Nothing" if that option is available and you want to reserve it for Quill.
 Quill does not change this system preference. These source defaults do not
 change older downloaded release artifacts.
 

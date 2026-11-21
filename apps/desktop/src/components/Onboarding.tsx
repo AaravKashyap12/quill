@@ -32,6 +32,8 @@ import type {
   RuntimeStatus,
   SystemProfile,
 } from "../types";
+import { LocalScribeModel } from "./LocalScribeModel";
+import { cancelWhisperDownload } from "../tauri";
 import { BrandMark } from "./BrandMark";
 import { OnboardingPractice } from "./OnboardingPractice";
 import type { SpeechSetupState } from "./FirstRunSetup";
@@ -55,6 +57,7 @@ interface OnboardingProps {
     provider: CloudProvider,
     key?: string,
   ) => Promise<ProviderKeyStatus>;
+  onModelsChanged: () => void;
   onFinish: (openScribe: boolean) => Promise<void>;
 }
 
@@ -208,6 +211,7 @@ export function Onboarding({
   onRetrySpeech,
   onConnectCloud,
   onFinish,
+  onModelsChanged,
 }: OnboardingProps) {
   const [step, setStep] = useState<SetupStep>("welcome");
   const [speechRoute, setSpeechRoute] = useState<SetupSpeechRoute>(
@@ -730,13 +734,15 @@ export function Onboarding({
                   >
                     Continue <ArrowRight size={14} aria-hidden="true" />
                   </button>
+                ) : speech.phase === "downloading" ? (
+                  <button className="ghost-action" type="button" onClick={() => void cancelWhisperDownload(speech.modelId).catch((error) => setActionError(String(error)))}>Pause download</button>
                 ) : speech.phase === "error" ? (
                   <button
                     className="primary-button"
                     type="button"
                     onClick={onRetrySpeech}
                   >
-                    <RotateCcw size={14} aria-hidden="true" /> Retry
+                    <RotateCcw size={14} aria-hidden="true" /> Resume / retry
                   </button>
                 ) : speech.phase === "missing" ||
                   speech.phase === "checking" ? (
@@ -803,8 +809,9 @@ export function Onboarding({
               <p className="onboarding-lede compact">
                 {scribeReady
                   ? "Scribe can refine wording without sending transcript text away."
-                  : "Choose TurboSpeak 1.7B for lighter hardware or Qwen 2.5 7B for stronger corrections. Quill will not choose for you."}
+                  : "Download the optional 2.50 GB model once, then use Scribe offline without another app."}
               </p>
+              <LocalScribeModel onChange={onModelsChanged} />
               <div className="onboarding-choice-actions">
                 {scribeReady ? (
                   <button
@@ -816,13 +823,6 @@ export function Onboarding({
                   </button>
                 ) : (
                   <>
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={() => void finish(true)}
-                    >
-                      Open local Scribe setup
-                    </button>
                     <button
                       className="ghost-action"
                       type="button"

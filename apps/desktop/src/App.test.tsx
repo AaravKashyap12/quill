@@ -5,6 +5,7 @@ import { defaultSettings } from "./defaults";
 import * as native from "./tauri";
 import type { AppSettings } from "./types";
 import type { SpeechSetupState } from "./components/FirstRunSetup";
+import { listen } from "@tauri-apps/api/event";
 
 const { effects, stateChanges, hooks, view } = vi.hoisted(() => ({
   effects: [] as Array<() => unknown>,
@@ -73,6 +74,33 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("window startup ownership", () => {
+  it("keeps a cached missing-key error visible after the runtime restarts", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    vi.mocked(native.loadSettings).mockResolvedValueOnce({ ...defaultSettings, transcriptionProvider: "groq", onboardingCompleted: true });
+    renderToStaticMarkup(<App />);
+    const cleanups = effects.map((effect) => effect());
+    try {
+      await vi.waitFor(() => expect(native.getProviderKeyStatus).toHaveBeenCalledTimes(2));
+      vi.mocked(native.getProviderKeyStatus).mockImplementation(async (provider) => ({
+        provider, configured: false, status: "missing", message: null,
+      }));
+      const callback = vi.mocked(listen).mock.calls.find(([event]) => event === "runtime://status")![1];
+      callback({ event: "runtime://status", id: 1, payload: { state: "error", provider: null, mode: null, message: "Missing saved key" } });
+      await vi.waitFor(() => {
+        hooks.cursor = 0;
+        renderToStaticMarkup(<App />);
+        expect(view.speech?.phase).toBe("error");
+      });
+      callback({ event: "runtime://status", id: 1, payload: { state: "ready", provider: null, mode: null, message: "Ready with Groq" } });
+      hooks.cursor = 0;
+      renderToStaticMarkup(<App />);
+      expect(view.speech).toMatchObject({ phase: "error", modelId: "Groq Cloud" });
+      expect(native.getProviderKeyStatus).toHaveBeenLastCalledWith("gemini");
+      expect(native.testProviderConnection).not.toHaveBeenCalled();
+    } finally {
+      for (const cleanup of cleanups) if (typeof cleanup === "function") cleanup();
+    }
+  });
   it.each([
     ["?overlay&mode=dictation", "Recording dictation"],
     ["?overlay&mode=scribe", "Recording scribe"],
@@ -97,6 +125,10 @@ describe("window startup ownership", () => {
         expect(native.loadSettings).toHaveBeenCalledOnce();
         expect(native.getProviderKeyStatus).toHaveBeenCalledWith("groq", false);
         expect(native.getProviderKeyStatus).toHaveBeenCalledWith("gemini", false);
+        hooks.cursor = 0;
+        renderToStaticMarkup(<App />);
+        expect(view.speech?.phase).toBe("ready");
+        expect(view.speech?.error).toBeNull();
         expect(native.detectProviders).toHaveBeenCalledOnce();
         expect(native.persistSettings).toHaveBeenCalledWith(expect.objectContaining({
           onboardingCompleted: true,
@@ -127,20 +159,24 @@ describe("window startup ownership", () => {
     }
   });
 
-  it("requests only the selected speech key and never tests Gemini cleanup on mount", async () => {
+  it("never requests either saved key or tests connections on mount", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
     vi.mocked(native.loadSettings).mockResolvedValueOnce({
       ...defaultSettings, transcriptionProvider: "groq", cleanupProvider: "gemini", onboardingCompleted: true,
     });
     vi.mocked(native.getProviderKeyStatus).mockImplementation(async (provider) => ({
-      provider, configured: provider === "groq", status: provider === "groq" ? "configured" : "unchecked", message: null,
+      provider, configured: false, status: "unchecked", message: null,
     }));
     renderToStaticMarkup(<App />);
     const cleanups = effects.map((effect) => effect());
     try {
       await vi.waitFor(() => expect(native.getProviderKeyStatus).toHaveBeenCalledTimes(2));
-      expect(native.getProviderKeyStatus).toHaveBeenCalledWith("groq", true);
+      expect(native.getProviderKeyStatus).toHaveBeenCalledWith("groq", false);
       expect(native.getProviderKeyStatus).toHaveBeenCalledWith("gemini", false);
+      hooks.cursor = 0;
+      renderToStaticMarkup(<App />);
+      expect(view.speech?.phase).toBe("ready");
+      expect(view.speech?.error).toBeNull();
       expect(native.testProviderConnection).not.toHaveBeenCalled();
       expect(native.persistSettings).not.toHaveBeenCalled();
     } finally {
@@ -159,7 +195,7 @@ describe("window startup ownership", () => {
     renderToStaticMarkup(<App />);
     const cleanups = effects.map((effect) => effect());
     try {
-      await vi.waitFor(() => expect(native.getProviderKeyStatus).toHaveBeenCalledWith("groq", true));
+      await vi.waitFor(() => expect(native.getProviderKeyStatus).toHaveBeenCalledWith("groq", false));
       expect(stateChanges).toContainEqual({ initial: defaultSettings, next: loaded });
       expect(stateChanges).toContainEqual({ initial: true, next: false });
       expect(native.persistSettings).not.toHaveBeenCalled();
@@ -182,7 +218,7 @@ describe("window startup ownership", () => {
     renderToStaticMarkup(<App />);
     const cleanups = effects.map((effect) => effect());
     try {
-      await vi.waitFor(() => expect(native.getProviderKeyStatus).toHaveBeenCalledWith("groq", true));
+      await vi.waitFor(() => expect(native.getProviderKeyStatus).toHaveBeenCalledWith("groq", false));
       hooks.cursor = 0;
       renderToStaticMarkup(<App />);
       expect(view.update).not.toBeNull();

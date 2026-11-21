@@ -54,3 +54,10 @@ describe("Scribe model readiness", () => {
     ).toBe(false);
   });
 });
+
+it("requires the managed model for offline Scribe, independently of external servers", () => {
+  const settings = { cleanupProvider: "local" as const, cleanupModel: "" };
+  expect(isScribeReady(settings, [{ kind: "ollama", baseUrl: "http://127.0.0.1:11434", available: true, models: ["qwen"] }])).toBe(false);
+  expect(isScribeReady(settings, [{ kind: "local", baseUrl: "", available: true, models: ["qwen3-4b-instruct-2507-q4-k-m"] }])).toBe(true);
+  expect(isScribeReady(settings, [{ kind: "local", baseUrl: "", available: false, models: [] }])).toBe(false);
+});

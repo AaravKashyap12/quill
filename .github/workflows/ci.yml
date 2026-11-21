@@ -43,7 +43,6 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
       - uses: actions/setup-python@v5
-        if: runner.os == 'Windows'
         with:
           python-version: "3.13"
       - name: Verify Windows bundler dependency downloads
@@ -58,6 +57,8 @@ jobs:
       - name: Test macOS signing policy with real signed bundles
         if: runner.os == 'macOS'
         run: python3 -m unittest discover -s scripts -p test_macos_signing.py
+      - name: Build pinned offline Scribe engine
+        run: python scripts/build-scribe.py
       - name: Rust format
         working-directory: apps/desktop/src-tauri
         run: cargo fmt --check

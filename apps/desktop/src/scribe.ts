@@ -12,11 +12,14 @@ export function isScribeReady(
       (status) => status.provider === "gemini" && status.configured && status.status === "connected",
     );
   }
+  if (settings.cleanupProvider === "local") {
+    return providers.some((provider) => provider.kind === "local" && provider.available);
+  }
   const selected = settings.cleanupModel.trim();
   return (
     selected.length > 0 &&
     providers.some(
-      (provider) => provider.available && provider.models.includes(selected),
+      (provider) => provider.kind !== "local" && provider.available && provider.models.includes(selected),
     )
   );
 }

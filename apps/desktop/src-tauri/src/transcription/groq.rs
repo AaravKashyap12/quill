@@ -62,16 +62,8 @@ struct GroqSegment {
 }
 
 impl GroqTranscriber {
-    pub async fn new() -> Result<Self> {
-        if get_key(CloudProvider::Groq)
-            .await
-            .map_err(|error| anyhow!(error))?
-            .is_none()
-        {
-            return Err(anyhow!(
-                "Connect a Groq API key in Voice settings before selecting Groq transcription."
-            ));
-        }
+    // Startup must not unlock Keychain. Read the key only for an actual request.
+    pub fn new() -> Result<Self> {
         Ok(Self {
             client: crate::credentials::cloud_client().map_err(|error| anyhow!(error))?,
         })

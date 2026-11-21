@@ -26,6 +26,7 @@ const COMPATIBLE_URLS: [&str; 3] = [
 /// when the user leaves the default URL pointing at Ollama.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
+    Local,
     Ollama,
     OpenAiCompatible,
     Gemini,
@@ -39,6 +40,7 @@ const GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta"
 /// `resolve_model`, so every code path stays consistent.
 pub async fn resolve_endpoint(settings: &AppSettings) -> Result<(Protocol, String)> {
     match settings.cleanup_provider {
+        CleanupProvider::Local => Ok((Protocol::Local, String::new())),
         CleanupProvider::Disabled => Err(anyhow!("Scribe cleanup is disabled")),
         CleanupProvider::Ollama => {
             let url = if settings.cleanup_base_url.contains(":11434") {
@@ -570,7 +572,7 @@ pub async fn warm_up(settings: AppSettings) {
     };
     // Cloud models do not need pre-warming, and a background warm-up must
     // never send even placeholder content to an explicitly selected service.
-    if protocol == Protocol::Gemini {
+    if matches!(protocol, Protocol::Gemini | Protocol::Local) {
         return;
     }
     if ensure_loopback(&base_url).is_err() {
@@ -627,7 +629,9 @@ pub async fn warm_up(settings: AppSettings) {
                 .send()
                 .await
         }
-        Protocol::Gemini => unreachable!("Gemini warm-up returns before creating a request"),
+        Protocol::Gemini | Protocol::Local => {
+            unreachable!("Managed warm-up returns before creating a request")
+        }
     };
 
     match result {
@@ -849,6 +853,15 @@ fn finish_clean(transcript: &str, outcome: CleanOutcome) -> Result<String> {
 }
 
 #[cfg(test)]
+pub(crate) async fn evaluate_managed_draft(
+    settings: &AppSettings,
+    request: &ScribeRequest<'_>,
+) -> Result<(String, bool)> {
+    let outcome = clean_request_with_outcome(settings, request, None).await?;
+    Ok((outcome.model_output, outcome.guard_reason.is_none()))
+}
+
+#[cfg(test)]
 async fn clean_with_outcome(
     settings: &AppSettings,
     transcript: &str,
@@ -875,7 +888,10 @@ async fn clean_request_with_outcome(
             guard_reason: None,
         });
     }
-    let request_prompt = prompt_parts_for_request(request, instruction);
+    let mut request_prompt = prompt_parts_for_request(request, instruction);
+    if settings.cleanup_provider == CleanupProvider::Local {
+        request_prompt.system.push_str("\n\nSpoken corrections are edits, not dialogue. When the speaker uses sorry, no, I mean, or scratch that between alternatives, replace the earlier alternative with the final one. Do not turn a correction into an apology, refusal, or contradiction. Preserve negation exactly: never change can to cannot or cannot to can.\nExample: Schedule the call on Wednesday, sorry Friday. -> Schedule the call on Friday.\nExample: Order two boxes, actually three boxes. -> Order three boxes.");
+    }
     let request_token_estimate = conservative_token_estimate(&request_prompt.system)
         .saturating_add(conservative_token_estimate(&request_prompt.user));
     if request_token_estimate > MAX_PROMPT_TOKEN_ESTIMATE {
@@ -886,7 +902,7 @@ async fn clean_request_with_outcome(
         ));
     }
     let (protocol, base_url) = resolve_endpoint(settings).await?;
-    if protocol != Protocol::Gemini {
+    if !matches!(protocol, Protocol::Gemini | Protocol::Local) {
         ensure_loopback(&base_url)?;
     }
     // Cold-loading a 400 MB–2 GB local model into RAM can easily take 30–60s on
@@ -904,11 +920,16 @@ async fn clean_request_with_outcome(
     };
     let model = if protocol == Protocol::Gemini {
         GEMINI_MODEL.to_owned()
+    } else if protocol == Protocol::Local {
+        crate::local_scribe::MODEL_ID.to_owned()
     } else {
         resolve_model(settings)?
     };
 
     let provider_output = match protocol {
+        Protocol::Local => parse_openai_output(
+            &crate::local_scribe::complete(&request_prompt.system, &request_prompt.user).await?,
+        ),
         Protocol::Ollama => {
             let response = client
                 .post(format!("{base_url}/api/generate"))

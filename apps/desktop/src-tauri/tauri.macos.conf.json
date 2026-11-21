@@ -5,9 +5,12 @@
       "entitlements": "Entitlements.plist",
       "hardenedRuntime": true
     },
-    "resources": [],
+    "resources": [
+      "resources/scribe/*"
+    ],
     "externalBin": [
-      "binaries/whisper-server"
+      "binaries/whisper-server",
+      "binaries/llama-server"
     ]
   }
 }

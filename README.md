@@ -61,11 +61,18 @@ release and verifies its SHA-256. It installs the same universal app for Apple
 Silicon and Intel. Mac builds remain an engineering preview; see the
 [hardware verification record](docs/macos-verification.md).
 
-Quill is ad-hoc signed, not Apple-notarized. If macOS blocks first launch, use
-**System Settings → Privacy & Security → Open Anyway**. Setup needs Microphone
+Quill is ad-hoc signed, not Apple-notarized. If macOS blocks a trusted download,
+follow [Apple’s per-app opening instructions](https://support.apple.com/en-us/102445)
+for your macOS version; do not disable Gatekeeper. Setup needs Microphone
 access to record and Accessibility access to insert. Homebrew does not grant
 permissions or bypass macOS security. Quit Quill before replacing an existing
 installation. Uninstalling the cask preserves settings, models and saved keys.
+
+For permission settings, use **System Preferences → Security & Privacy → Privacy**
+on Monterey (macOS 12), or **System Settings → Privacy & Security** on Ventura
+and later. Select Microphone or Accessibility as needed. See the
+[Mac tester guide](docs/macos-testing.md) for details. These navigation instructions
+do not establish compatibility with Monterey; Mac builds remain unsupported.
 
 To update a Homebrew-managed installation (including apps with their own updater):
 
@@ -131,12 +138,14 @@ absent from the transcript.
 - A microphone
 - About 75 MB–1.6 GB for a whisper.cpp model
 - Optional NVIDIA acceleration: about 700 MB to download and 1.25 GB installed
-- Optional Scribe provider:
+- Optional built-in offline Scribe: 2.50 GB Qwen3 4B model download, at least 4 GB free memory. Download, pause, resume, and remove it inside Quill. No separate server installation.
+- Advanced Scribe providers remain available:
   - [Ollama](https://ollama.com/)
   - LM Studio, Jan, or llama.cpp server exposing an OpenAI-compatible endpoint
 
-Scribe does not choose a cleanup model automatically. After connecting Ollama,
-the user explicitly selects one of Quill's evaluated options:
+The installer includes inference engines, not model weights. Offline speech and Scribe downloads are optional and remain in per-user application data across updates. The built-in Scribe engine runs only while processing a draft, then exits to release memory. Existing external-server configurations are preserved.
+
+For an external Ollama server, select a model explicitly. Previously evaluated options:
 
 | Scribe model | Download | Clear minimum | Trade-off |
 | --- | ---: | --- | --- |
@@ -206,7 +215,7 @@ scripts/
 | Recognition | whisper.cpp | Bundled Windows CPU runtime and macOS Metal sidecar; optional verified Windows CUDA download |
 | Text commit | Final clipboard paste | The target editor changes only after the user stops speaking |
 | Speech recognition | Local whisper.cpp, Groq, or Gemini 3.5 Transcribe | Every provider inserts after release |
-| Scribe cleanup | Ollama, OpenAI-compatible localhost, Gemini, or disabled | Every draft still passes the same guards and review window |
+| Scribe cleanup | Built-in offline Qwen3 4B, Ollama, OpenAI-compatible localhost, Gemini, or disabled | Every draft still passes the same guards and review window |
 | Windows hotkeys | `GetAsyncKeyState` polling | No system-wide keyboard hook |
 | Windows insertion | Clipboard paste | Reliable Unicode insertion after transcription completes |
 | macOS hotkeys | CoreGraphics key-state and modifier-flag polling | Global state without an event tap keyboard hook |
@@ -250,12 +259,14 @@ Windows (bundled CPU runtime plus a separately packaged optional CUDA runtime):
 
 ```powershell
 ./scripts/build-whisper.ps1
+python scripts/build-scribe.py
 ```
 
 macOS with Metal:
 
 ```bash
 ./scripts/build-whisper.sh metal
+python3 scripts/build-scribe.py
 ```
 
 Speech models are not bundled with the installer. During onboarding, choose
