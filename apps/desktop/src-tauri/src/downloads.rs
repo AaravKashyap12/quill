@@ -1106,15 +1106,17 @@ mod tests {
     }
 
     fn runtime_fixture(revision: &str) -> PathBuf {
+        static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock should follow the Unix epoch")
             .as_nanos();
         let directory = std::env::temp_dir().join(format!(
-            "quill-cuda-runtime-test-{}-{nonce}",
+            "quill-cuda-runtime-test-{}-{nonce}-{sequence}",
             std::process::id()
         ));
-        std::fs::create_dir_all(&directory).expect("fixture directory should be created");
+        std::fs::create_dir(&directory).expect("fixture directory should be created");
         for required in REQUIRED_CUDA_FILES {
             if *required != CUDA_MANIFEST_NAME {
                 std::fs::write(directory.join(required), [])
