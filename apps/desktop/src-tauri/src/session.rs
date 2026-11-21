@@ -791,7 +791,7 @@ impl ActiveSession {
             },
             (self.mode == Mode::Scribe).then_some(self.settings.cleanup_base_url.as_str()),
         );
-        let snapshot = self.audio.snapshot()?;
+        let snapshot = self.audio.finish()?;
         let audio_bucket = metrics::audio_duration_bucket(snapshot.duration_ms);
         if snapshot.duration_ms >= 250 && audio_peak(&snapshot) >= 0.002 {
             if !runtime.supports_rolling() && self.settings.keep_recovery_audio {
