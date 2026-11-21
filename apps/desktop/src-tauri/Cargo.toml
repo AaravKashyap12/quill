@@ -22,7 +22,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 anyhow = "1"
 arboard = "3.4"
-cpal = "0.15"
 dirs = "6"
 hound = "3.5"
 getrandom = "0.2.17"
@@ -42,6 +41,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-segmentation = "1"
 webrtc-vad = "0.4"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+cpal = "0.15"
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
@@ -63,6 +65,8 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# 0.15 retains named input streams through their CoreAudio disconnect listener.
+cpal = "0.16"
 keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
 core-foundation = "0.10"
 objc2 = "0.6"

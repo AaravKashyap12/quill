@@ -19,7 +19,7 @@ pub struct AudioSnapshot {
 }
 
 pub struct AudioCapture {
-    _stream: Stream,
+    stream: Option<Stream>,
     samples: Arc<Mutex<Vec<f32>>>,
     visual_levels: Arc<Mutex<[f32; VISUALIZER_BARS]>>,
     source_sample_rate: u32,
@@ -142,7 +142,7 @@ impl AudioCapture {
         );
 
         Ok(Self {
-            _stream: stream,
+            stream: Some(stream),
             samples,
             visual_levels,
             source_sample_rate,
@@ -152,21 +152,39 @@ impl AudioCapture {
     }
 
     pub fn snapshot(&self) -> Result<AudioSnapshot> {
+        let source = self.sample_buffer()?.clone();
+        Ok(self.resampled(source))
+    }
+
+    pub fn finish(&mut self) -> Result<AudioSnapshot> {
+        // Release the microphone before filtering, recovery writes or cloud I/O.
+        drop(self.stream.take());
+        let source = std::mem::take(&mut *self.sample_buffer()?);
+        Ok(self.resampled(source))
+    }
+
+    fn sample_buffer(&self) -> Result<std::sync::MutexGuard<'_, Vec<f32>>> {
         if let Some(message) = self.error.lock().ok().and_then(|error| error.clone()) {
             return Err(anyhow!(
                 "Microphone stream failed: {message}. {MICROPHONE_HELP}"
             ));
         }
-        let source = self
-            .samples
+        self.samples
             .lock()
-            .map_err(|_| anyhow!("microphone sample buffer was poisoned"))?
-            .clone();
+            .map_err(|_| anyhow!("microphone sample buffer was poisoned"))
+    }
+
+    fn resampled(&self, source: Vec<f32>) -> AudioSnapshot {
         let duration_ms = source.len() as u64 * 1_000 / u64::from(self.source_sample_rate.max(1));
-        Ok(AudioSnapshot {
-            samples: resample_audio(&source, self.source_sample_rate, WHISPER_SAMPLE_RATE),
+        let samples = if self.source_sample_rate == WHISPER_SAMPLE_RATE {
+            source
+        } else {
+            resample_audio(&source, self.source_sample_rate, WHISPER_SAMPLE_RATE)
+        };
+        AudioSnapshot {
+            samples,
             duration_ms,
-        })
+        }
     }
 
     pub(crate) fn visual_levels_handle(&self) -> Arc<Mutex<[f32; VISUALIZER_BARS]>> {
@@ -335,6 +353,44 @@ pub fn pcm16_wav(samples: &[f32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a Mac with an authorized microphone"]
+    fn named_microphone_releases_callbacks_on_finish_and_drop() {
+        let name = cpal::default_host()
+            .default_input_device()
+            .unwrap()
+            .name()
+            .unwrap();
+        for finish in [true, false, true, false] {
+            let mut capture = AudioCapture::start(Some(&name)).unwrap();
+            let samples = Arc::downgrade(&capture.samples);
+            if finish {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                while capture.samples.lock().unwrap().is_empty()
+                    && std::time::Instant::now() < deadline
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                let audio = capture.finish().unwrap();
+                assert!(
+                    !audio.samples.is_empty(),
+                    "no microphone samples before release"
+                );
+                assert_eq!(
+                    samples.strong_count(),
+                    1,
+                    "callback still owns the buffer during final processing"
+                );
+            }
+            drop(capture);
+            assert!(
+                samples.upgrade().is_none(),
+                "callback outlived its recording"
+            );
+        }
+    }
 
     #[test]
     fn writes_valid_whisper_wav_header() {
