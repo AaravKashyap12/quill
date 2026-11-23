@@ -1271,7 +1271,7 @@ struct InsertionRetry {
 
 impl InsertionRetry {
     fn ready(&self, now: Instant) -> bool {
-        self.retry_after.map_or(true, |deadline| now >= deadline)
+        self.retry_after.is_none_or(|deadline| now >= deadline)
     }
 
     /// Keep retrying after permission/focus recovery without flooding logs or IPC.
