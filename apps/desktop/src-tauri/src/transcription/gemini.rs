@@ -285,6 +285,28 @@ fn custom_vocabulary(settings: &AppSettings) -> (Vec<String>, bool) {
 }
 
 fn extract_output_text(payload: &Value) -> Option<String> {
+    if payload
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|s| s != "completed")
+    {
+        return None;
+    }
+    if let Some(steps) = payload.get("steps").and_then(Value::as_array) {
+        let output = steps
+            .iter()
+            .rev()
+            .find(|step| step["type"] == "model_output")?;
+        let text: String = output["content"]
+            .as_array()?
+            .iter()
+            .filter(|part| part["type"] == "text")
+            .filter_map(|part| part["text"].as_str())
+            .collect();
+        let text = text.trim();
+        return (!text.is_empty()).then(|| text.to_owned());
+    }
+    // Older Interactions responses used top-level output fields.
     payload
         .get("output_text")
         .and_then(Value::as_str)
@@ -435,6 +457,31 @@ mod tests {
         let (terms, truncated) = custom_vocabulary(&settings);
         assert_eq!(terms, vec!["Tauri"]);
         assert!(!truncated);
+    }
+
+    #[test]
+    fn reads_completed_rest_transcript_from_model_output_steps() {
+        let response = json!({"status": "completed", "steps": [
+            {"type": "user_input", "content": [{"type": "text", "text": "not the transcript"}]},
+            {"type": "model_output", "content": [
+                {"type": "text", "text": "The blue bicycle", "annotations": [{"text": "blue"}]},
+                {"type": "text", "text": " is beside the garden gate."}
+            ]}
+        ]});
+        assert_eq!(
+            extract_output_text(&response).as_deref(),
+            Some("The blue bicycle is beside the garden gate.")
+        );
+    }
+
+    #[test]
+    fn ignores_non_transcript_steps_and_incomplete_responses() {
+        for response in [
+            json!({"steps": [{"type":"thought", "content":[{"type":"text", "text":"private"}]}]}),
+            json!({"status":"failed", "steps": [{"type":"model_output","content":[{"type":"text","text":"partial"}]}]}),
+        ] {
+            assert_eq!(extract_output_text(&response), None);
+        }
     }
 
     #[test]
