@@ -859,6 +859,11 @@ impl ActiveSession {
                             true,
                         );
                         let _ = recovery::mark_provider_failure(&self.recovery_id, provider);
+                    } else if self.settings.transcription_provider == TranscriptionProvider::Apple
+                        && self.transcript.trim().is_empty()
+                    {
+                        // Audio retention is off and this final-only session has no text to recover.
+                        let _ = recovery::clear_if_matches(&self.recovery_id);
                     }
                     if self.mode == Mode::Scribe {
                         crate::review::hide_processing(app);

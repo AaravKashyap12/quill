@@ -2,6 +2,7 @@ use crate::asr::AsrPass;
 use crate::audio::WHISPER_SAMPLE_RATE;
 use anyhow::{bail, Result};
 use std::ffi::{c_char, CStr, CString};
+use std::sync::Mutex;
 use std::time::Instant;
 
 extern "C" {
@@ -62,6 +63,12 @@ fn chunk_length(samples: &[f32]) -> usize {
 }
 
 fn transcribe_chunk(tag: &CStr, samples: &[f32]) -> Result<String> {
+    // Apple can cancel an active recognition task when this process starts another.
+    // Live dictation and recovery share this lock for one native request at a time.
+    static RECOGNIZER: Mutex<()> = Mutex::new(());
+    let _guard = RECOGNIZER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut result = std::ptr::null_mut();
     // The synchronous bridge copies PCM and returns an owned UTF-8 string on success.
     let status = unsafe {
@@ -124,7 +131,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires macOS English on-device recognition and a synthetic 16 kHz WAV fixture"]
-    fn long_recording_preserves_beginning_middle_and_end() {
+    fn live_dictation_and_long_recovery_both_keep_their_transcripts() {
         // Generate a paragraph over one minute long with the three markers
         // below using macOS say and convert to mono PCM16 / 16 kHz.
         let path = std::env::var("QUILL_APPLE_SYNTHETIC_WAV").unwrap();
@@ -135,8 +142,21 @@ mod tests {
             .map(|s| s.unwrap() as f32 / 32768.0)
             .collect::<Vec<_>>();
         assert!(samples.len() > 60 * 16_000);
-        let pass = transcribe("en", &samples).unwrap();
-        let text = pass.text.to_lowercase();
+        let start = std::sync::Barrier::new(2);
+        let (retry, live) = std::thread::scope(|scope| {
+            let recovery = scope.spawn(|| {
+                start.wait();
+                transcribe("en", &samples).unwrap()
+            });
+            start.wait();
+            let live = transcribe("en", &samples[..5 * 16_000]).unwrap();
+            (recovery.join().unwrap(), live)
+        });
+        assert!(
+            live.text.to_lowercase().contains("purple bicycle"),
+            "live dictation lost its opening phrase"
+        );
+        let text = retry.text.to_lowercase();
         for marker in ["purple bicycle", "little bird", "orange submarine"] {
             assert!(text.contains(marker), "missing synthetic marker: {marker}");
         }

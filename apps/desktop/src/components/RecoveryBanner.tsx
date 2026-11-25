@@ -170,10 +170,10 @@ export function RecoveryBanner() {
       const recovered = await retryRecoveryTranscription(pending.id, provider);
       setPending(recovered);
       setExpanded(true);
-    } catch {
+    } catch (error) {
       setStatus({
         kind: "discard-failed",
-        error: provider === "apple"
+        error: typeof error === "string" && error.trim() ? error : provider === "apple"
           ? "Apple Speech could not finish this recording. Check your Mac’s Dictation language or try the local Whisper model."
           : provider === "local"
           ? "Local transcription couldn't finish. Check that a speech model is installed and try again."
