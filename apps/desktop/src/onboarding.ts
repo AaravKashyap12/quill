@@ -2,7 +2,7 @@ import type { AppSettings, SystemProfile } from "./types";
 
 export type SetupLanguage = "english" | "multilingual";
 export type SetupPriority = "fast" | "balanced" | "accurate";
-export type SetupSpeechRoute = "local" | "groq" | "gemini";
+export type SetupSpeechRoute = "local" | "apple" | "groq" | "gemini";
 export type SetupScribeRoute = "disabled" | "local" | "gemini";
 
 export interface SetupDataPath {

@@ -3107,6 +3107,8 @@ version = "0.4.10"
 dependencies = [
  "anyhow",
  "arboard",
+ "base64 0.22.1",
+ "cc",
  "core-foundation 0.10.1",
  "cpal 0.15.3",
  "cpal 0.16.0",

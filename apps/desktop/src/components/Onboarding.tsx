@@ -41,6 +41,7 @@ import type { SpeechSetupState } from "./FirstRunSetup";
 type SetupStep = "welcome" | "choices" | "speech" | "scribe" | "ready";
 
 interface OnboardingProps {
+  appleAvailable?: boolean;
   settings: AppSettings;
   profile: SystemProfile;
   speech: SpeechSetupState;
@@ -200,6 +201,7 @@ function CloudKeySetup({
 }
 
 export function Onboarding({
+  appleAvailable,
   settings,
   profile,
   speech,
@@ -262,7 +264,8 @@ export function Onboarding({
     setActionError(null);
     try {
       await onChooseProviders(speechRoute, scribeRoute);
-      setStep("speech");
+      if (speechRoute === "apple") completeSpeechStep();
+      else setStep("speech");
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -371,7 +374,7 @@ export function Onboarding({
               </p>
               <fieldset className="onboarding-fieldset">
                 <legend>Speech recognition</legend>
-                <div className="onboarding-options is-three">
+                <div className={`onboarding-options ${appleAvailable ? "is-two" : "is-three"}`}>
                   <label
                     className={speechRoute === "local" ? "is-selected" : ""}
                   >
@@ -387,6 +390,14 @@ export function Onboarding({
                     <strong>On this device</strong>
                     <small>Private, with text inserted when you stop</small>
                   </label>
+                  {appleAvailable && (
+                    <label className={speechRoute === "apple" ? "is-selected" : ""}>
+                      <input type="radio" name="speech-route" checked={speechRoute === "apple"} onChange={() => setSpeechRoute("apple")} />
+                      <span className="option-icon"><Mic2 size={17} aria-hidden="true" /></span>
+                      <strong>Apple Speech</strong>
+                      <small>Use this Mac’s default speech language on-device</small>
+                    </label>
+                  )}
                   <label
                     className={speechRoute === "groq" ? "is-selected" : ""}
                   >
@@ -494,6 +505,7 @@ export function Onboarding({
                 <button
                   className="primary-button"
                   type="button"
+                  disabled={speechRoute === "apple" && !appleAvailable}
                   onClick={() => void continueFromChoices()}
                 >
                   Continue <ArrowRight size={14} aria-hidden="true" />
@@ -559,8 +571,8 @@ export function Onboarding({
                 onStatus={updateStatus}
               />
               <p className="onboarding-cloud-disclosure">
-                Quill requests deletion immediately after transcription. If
-                deletion fails, Google may retain the upload for up to 48
+                Quill sends short clips directly. For larger uploads, Quill requests
+                deletion after transcription. If deletion fails, Google may retain the file for up to 48
                 hours. Free-tier content may be used to improve Google products.
               </p>
               <div className="onboarding-actions">
@@ -783,7 +795,7 @@ export function Onboarding({
                 <button
                   className="ghost-action"
                   type="button"
-                  onClick={() => setStep("speech")}
+                  onClick={() => setStep(speechRoute === "apple" ? "choices" : "speech")}
                 >
                   <ArrowLeft size={14} aria-hidden="true" /> Back
                 </button>

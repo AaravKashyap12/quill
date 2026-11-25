@@ -827,10 +827,7 @@ impl ActiveSession {
             {
                 Ok(pass) => pass,
                 Err(error) => {
-                    if !runtime.supports_rolling() {
-                        let provider = runtime
-                            .cloud_provider_id()
-                            .expect("non-rolling runtimes are cloud providers");
+                    if let Some(provider) = runtime.cloud_provider_id() {
                         record_cloud_session_stage(
                             "releaseToTranscriptMs",
                             released_at.elapsed().as_millis(),
@@ -839,9 +836,13 @@ impl ActiveSession {
                             cloud_error_outcome(&error),
                             Some(audio_bucket),
                         );
-                        // Cloud failure is the exceptional case where recovery
-                        // audio is retained even when routine audio checkpoints
-                        // are disabled: there is no transcript to recover from.
+                    }
+                    // Cloud failures retain the existing exceptional recovery behavior.
+                    // Apple's on-device recordings follow the user's recovery preference.
+                    if let Some(provider) = failed_recording_provider(
+                        self.settings.transcription_provider,
+                        self.settings.keep_recovery_audio,
+                    ) {
                         let _ = recovery::write_transcript(
                             &self.recovery_id,
                             self.mode,
@@ -858,6 +859,11 @@ impl ActiveSession {
                             true,
                         );
                         let _ = recovery::mark_provider_failure(&self.recovery_id, provider);
+                    } else if self.settings.transcription_provider == TranscriptionProvider::Apple
+                        && self.transcript.trim().is_empty()
+                    {
+                        // Audio retention is off and this final-only session has no text to recover.
+                        let _ = recovery::clear_if_matches(&self.recovery_id);
                     }
                     if self.mode == Mode::Scribe {
                         crate::review::hide_processing(app);
@@ -874,10 +880,7 @@ impl ActiveSession {
             )?;
             self.transcript = pass.text.clone();
             self.last_hypothesis = pass.words.clone();
-            if !runtime.supports_rolling() {
-                let provider = runtime
-                    .cloud_provider_id()
-                    .expect("non-rolling runtimes are cloud providers");
+            if let Some(provider) = runtime.cloud_provider_id() {
                 record_cloud_session_stage(
                     "releaseToTranscriptMs",
                     released_at.elapsed().as_millis(),
@@ -1461,6 +1464,18 @@ fn cloud_path_name(settings: &AppSettings) -> Option<&'static str> {
     }
 }
 
+fn failed_recording_provider(
+    provider: TranscriptionProvider,
+    keep_audio: bool,
+) -> Option<&'static str> {
+    match provider {
+        TranscriptionProvider::Apple if keep_audio => Some("apple"),
+        TranscriptionProvider::Groq => Some("groq"),
+        TranscriptionProvider::Gemini => Some("gemini"),
+        _ => None,
+    }
+}
+
 fn cloud_error_outcome(error: &anyhow::Error) -> &'static str {
     let message = error.to_string().to_ascii_lowercase();
     if message.contains("timed out") || message.contains("taking too long") {
@@ -1900,6 +1915,26 @@ mod tests {
         assert_eq!(
             resolve_scribe_register(Register::Generic, Register::Generic),
             Register::Generic
+        );
+    }
+
+    #[test]
+    fn failed_apple_recordings_follow_the_audio_retention_setting() {
+        assert_eq!(
+            failed_recording_provider(TranscriptionProvider::Apple, true),
+            Some("apple")
+        );
+        assert_eq!(
+            failed_recording_provider(TranscriptionProvider::Apple, false),
+            None
+        );
+        assert_eq!(
+            failed_recording_provider(TranscriptionProvider::Groq, false),
+            Some("groq")
+        );
+        assert_eq!(
+            failed_recording_provider(TranscriptionProvider::Gemini, false),
+            Some("gemini")
         );
     }
 

@@ -406,6 +406,7 @@ export function emptyStyleProfile(targetApp: TargetApp): StyleProfile {
 }
 
 interface VoiceViewProps {
+  appleAvailable?: boolean;
   settings: AppSettings;
   update: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
   providers: ProviderStatus[];
@@ -415,6 +416,7 @@ interface VoiceViewProps {
 }
 
 export function VoiceView({
+  appleAvailable,
   settings,
   update,
   providers,
@@ -930,7 +932,7 @@ export function VoiceView({
       <section aria-labelledby="recognition-title">
         <div className="section-heading">
           <h2 id="recognition-title">Recognition</h2>
-          <span>{settings.transcriptionProvider === "local" ? "Private, inserts after release." : "Cloud transcription after release."}</span>
+          <span>{["local", "apple"].includes(settings.transcriptionProvider) ? "Private, inserts after release." : "Cloud transcription after release."}</span>
         </div>
         <div className="settings-group">
           <SettingRow
@@ -938,6 +940,8 @@ export function VoiceView({
             description={
               settings.transcriptionProvider === "local"
                 ? "Local transcribes on this device and inserts the completed text when you stop."
+                : settings.transcriptionProvider === "apple"
+                  ? "Uses Apple’s on-device speech recognition when you release the shortcut."
                 : settings.transcriptionProvider === "groq"
                   ? "Groq offers generous free usage. Audio is uploaded only after you finish speaking."
                   : "Gemini 3.5 Transcribe prioritizes accuracy. Audio is uploaded only after you finish speaking."
@@ -948,6 +952,8 @@ export function VoiceView({
               onChange={(event) => update("transcriptionProvider", event.target.value as AppSettings["transcriptionProvider"])}
             >
               <option value="local">Local · whisper.cpp</option>
+              {(appleAvailable || settings.transcriptionProvider === "apple") &&
+                <option value="apple" disabled={!appleAvailable}>Apple Speech · {appleAvailable ? "on this Mac" : "unavailable for this language"}</option>}
               <option value="groq">Groq Cloud · inserts after release</option>
               <option value="gemini">Gemini Cloud · highest quality</option>
             </select>
@@ -967,8 +973,8 @@ export function VoiceView({
             >
               {cloudKeyControl("gemini")}
               <p className="cloud-provider-disclosure">
-                Quill requests deletion immediately after transcription. If
-                deletion fails, Google may retain the upload for up to 48
+                Quill sends short clips directly. For larger uploads, Quill requests
+                deletion after transcription. If deletion fails, Google may retain the file for up to 48
                 hours. Free-tier content may be used to improve Google products.
               </p>
             </SettingRow>
@@ -1221,6 +1227,8 @@ export function VoiceView({
             description={
               settings.transcriptionProvider === "gemini"
                 ? "Gemini automatically detects supported languages and code-switching. This choice remains available for your local fallback model."
+                : settings.transcriptionProvider === "apple"
+                  ? "Choose an on-device language. Auto uses your Mac’s speech recognition locale."
                 : settings.language === "en"
                 ? "English uses dedicated English-only models for the best accuracy."
                 : settings.language === "auto"

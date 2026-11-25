@@ -11,3 +11,8 @@ it.each(["groq", "gemini"] as const)("preserves completed %s setup when Discard 
   expect(speechSetupFor({ ...settings, onboardingCompleted: false }, [], []))
     .toMatchObject({ phase: "checking" });
 });
+
+it("keeps Apple Speech ready without Whisper models or cloud credentials", () => {
+  expect(speechSetupFor({ ...defaultSettings, transcriptionProvider: "apple" }, [], []))
+    .toMatchObject({ phase: "ready", modelId: "Apple Speech", error: null });
+});

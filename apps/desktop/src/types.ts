@@ -67,7 +67,7 @@ export interface AppSettings {
   whisperModel: string;
   backend: "auto" | "cpu" | "cuda" | "metal";
   language: string;
-  transcriptionProvider: "local" | "groq" | "gemini";
+  transcriptionProvider: "local" | "apple" | "groq" | "gemini";
   defaultRegister: Register;
   cleanupProvider: "local" | "auto" | "ollama" | "openai-compatible" | "gemini" | "disabled";
   cleanupModel: string;

@@ -34,6 +34,7 @@ import {
   detectProviders,
   downloadWhisperModel,
   getSystemProfile,
+  appleSpeechSupported,
   getProviderKeyStatus,
   mergeProviderKeyStatuses,
   listInstalledWhisperModels,
@@ -123,6 +124,16 @@ export function App() {
 function SettingsApp() {
   const [section, setSection] = useState<NavigationSection>("general");
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const [onboardingRequired, setOnboardingRequired] = useState(false);
+  const appleLanguage = onboardingRequired ? "auto" : settings.language;
+  const [appleAvailable, setAppleAvailable] = useState<boolean | null>(null);
+  useEffect(() => {
+    let current = true;
+    void appleSpeechSupported(appleLanguage).catch(() => false).then((available) => {
+      if (current) setAppleAvailable(available);
+    });
+    return () => { current = false; };
+  }, [appleLanguage]);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [cloudStatuses, setCloudStatuses] = useState<ProviderKeyStatus[]>([
     { provider: "groq", configured: false, status: "unchecked", message: null },
@@ -133,15 +144,18 @@ function SettingsApp() {
   const [saved, setSaved] = useState(false);
   const [providersChecked, setProvidersChecked] = useState(false);
   const [initialising, setInitialising] = useState(true);
-  const [onboardingRequired, setOnboardingRequired] = useState(false);
   const [systemProfile, setSystemProfile] = useState<SystemProfile | null>(null);
-  const [speechSetup, setSpeechSetup] = useState<SpeechSetupState>({
+  const [providerSetup, setSpeechSetup] = useState<SpeechSetupState>({
     phase: "checking",
     modelId: "base.en",
     bytesDownloaded: 0,
     bytesTotal: FALLBACK_MODEL_BYTES,
     error: null,
   });
+  const speechSetup: SpeechSetupState =
+    settings.transcriptionProvider === "apple" && appleAvailable === false
+      ? { ...providerSetup, phase: "error", modelId: "Apple Speech", error: "Apple Speech is unavailable for this language on this computer. Choose another language or speech provider in Voice." }
+      : providerSetup;
   /* Last persisted settings, so Discard can restore them without a reload. */
   const savedSettings = useRef<AppSettings>(defaultSettings);
   const setupGeneration = useRef(0);
@@ -174,7 +188,7 @@ function SettingsApp() {
         savedSettings.current = loaded;
         setSettings(loaded);
         setOnboardingRequired(!loaded.onboardingCompleted);
-        setSpeechSetup({
+        setSpeechSetup(loaded.transcriptionProvider === "apple" ? speechSetupFor(loaded, installed, []) : {
           phase: "checking",
           modelId: loaded.transcriptionProvider === "gemini" ? "Gemini 3.5 Transcribe" : "Groq Cloud",
           bytesDownloaded: 0, bytesTotal: 0, error: null,
@@ -199,6 +213,7 @@ function SettingsApp() {
           : loaded.transcriptionProvider === "gemini"
             ? geminiStatus
             : undefined;
+      if (loaded.transcriptionProvider === "apple") return;
       if (selectedCloudSpeechStatus) {
         setSpeechSetup((current) => current.phase !== "checking" ? current :
           speechSetupFor(loaded, installed, [groqStatus, geminiStatus]));
@@ -319,7 +334,7 @@ function SettingsApp() {
     if (!isTauri()) return;
     const unlisten = listen<RuntimeStatus>("runtime://status", (event) => {
       setRuntime(event.payload);
-      if (event.payload.state === "error" && savedSettings.current.transcriptionProvider !== "local") {
+      if (event.payload.state === "error" && ["groq", "gemini"].includes(savedSettings.current.transcriptionProvider)) {
         // Read cached status only: reporting a failure must not reopen Keychain.
         const generation = setupGeneration.current;
         void Promise.all([getProviderKeyStatus("groq"), getProviderKeyStatus("gemini")]).then((statuses) => {
@@ -447,6 +462,7 @@ function SettingsApp() {
   async function finishOnboarding(openScribe: boolean) {
     const next = {
       ...savedSettings.current,
+      language: savedSettings.current.transcriptionProvider === "apple" ? "auto" : savedSettings.current.language,
       onboardingCompleted: true,
       scribeSetupDismissed:
         openScribe || scribeReady ? savedSettings.current.scribeSetupDismissed : true,
@@ -473,7 +489,9 @@ function SettingsApp() {
     await persistSettings(next);
     savedSettings.current = next;
     setSettings(next);
-    if (speech !== "local") {
+    if (speech === "apple") {
+      setSpeechSetup(speechSetupFor(next, [], []));
+    } else if (speech !== "local") {
       const status = cloudStatuses.find((item) => item.provider === speech);
       const providerName = speech === "gemini" ? "Gemini" : "Groq";
       setSpeechSetup({
@@ -575,6 +593,7 @@ function SettingsApp() {
   if (onboardingRequired && systemProfile) {
     return (
       <Onboarding
+        appleAvailable={appleAvailable === true}
         settings={settings}
         profile={systemProfile}
         speech={speechSetup}
@@ -634,7 +653,7 @@ function SettingsApp() {
                   <Download size={13} />
                 )}
                 {speechSetup.phase === "error" || speechSetup.phase === "missing"
-                  ? settings.transcriptionProvider === "local" ? "Speech model needs attention" : "Speech connection needs attention"
+                  ? settings.transcriptionProvider === "apple" ? "Apple Speech unavailable" : settings.transcriptionProvider === "local" ? "Speech model needs attention" : "Speech connection needs attention"
                   : `Downloading ${speechSetup.modelId}`}
               </span>
               {speechSetup.phase === "downloading" ? (
@@ -655,7 +674,7 @@ function SettingsApp() {
           <div className="sidebar-privacy">
             <LockKeyhole size={14} />
             <span>
-              {settings.transcriptionProvider !== "local" || settings.cleanupProvider === "gemini"
+              {["groq", "gemini"].includes(settings.transcriptionProvider) || settings.cleanupProvider === "gemini"
                 ? "Cloud is used only for selected providers"
                 : "Processing stays on this device"}
             </span>
@@ -695,6 +714,7 @@ function SettingsApp() {
           ) : null}
           {section === "voice" ? (
             <VoiceView
+              appleAvailable={appleAvailable === true}
               settings={settings}
               update={update}
               providers={providers}

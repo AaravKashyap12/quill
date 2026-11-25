@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { Onboarding } from "./components/Onboarding";
 import { defaultSettings } from "./defaults";
 import * as native from "./tauri";
 import type { AppSettings } from "./types";
@@ -32,6 +33,7 @@ vi.mock("react", async (original) => ({
     return hooks.values[index];
   },
 }));
+vi.mock("./components/Onboarding", () => ({ Onboarding: vi.fn(() => null) }));
 vi.mock("./views/GeneralView", () => ({ GeneralView: ({ update }: { update: typeof view.update }) => {
   view.update = update; return <div>General settings</div>;
 } }));
@@ -135,6 +137,35 @@ describe("window startup ownership", () => {
           speechModelSetupAttempted: true,
         }));
       });
+    } finally {
+      for (const cleanup of cleanups) if (typeof cleanup === "function") cleanup();
+    }
+  });
+
+  it("applies the Mac speech locale only if Apple is still selected at the end of setup", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    vi.mocked(native.loadSettings).mockResolvedValueOnce({
+      ...defaultSettings, onboardingCompleted: false, transcriptionProvider: "groq", language: "en",
+    });
+    renderToStaticMarkup(<App />);
+    const cleanups = effects.map((effect) => effect());
+    try {
+      await vi.waitFor(() => {
+        hooks.cursor = 0;
+        renderToStaticMarkup(<App />);
+        expect(Onboarding).toHaveBeenCalled();
+      });
+      const setup = vi.mocked(Onboarding).mock.lastCall![0];
+      await setup.onChooseProviders("apple", "disabled");
+      await setup.onChooseProviders("groq", "disabled");
+      expect(native.persistSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+        transcriptionProvider: "groq", language: "en",
+      }));
+      await setup.onChooseProviders("apple", "disabled");
+      await setup.onFinish(false);
+      expect(native.persistSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+        transcriptionProvider: "apple", language: "auto", onboardingCompleted: true,
+      }));
     } finally {
       for (const cleanup of cleanups) if (typeof cleanup === "function") cleanup();
     }

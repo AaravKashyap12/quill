@@ -214,7 +214,7 @@ scripts/
 | Desktop shell | Tauri v2 + React + TypeScript | Shared settings and command surface with native platform windows |
 | Recognition | whisper.cpp | Bundled Windows CPU runtime and macOS Metal sidecar; optional verified Windows CUDA download |
 | Text commit | Final clipboard paste | The target editor changes only after the user stops speaking |
-| Speech recognition | Local whisper.cpp, Groq, or Gemini 3.5 Transcribe | Every provider inserts after release |
+| Speech recognition | Local whisper.cpp, on-device Apple Speech on supported Macs, Groq, or Gemini 3.5 Transcribe | Every provider inserts after release |
 | Scribe cleanup | Built-in offline Qwen3 4B, Ollama, OpenAI-compatible localhost, Gemini, or disabled | Every draft still passes the same guards and review window |
 | Windows hotkeys | `GetAsyncKeyState` polling | No system-wide keyboard hook |
 | Windows insertion | Clipboard paste | Reliable Unicode insertion after transcription completes |

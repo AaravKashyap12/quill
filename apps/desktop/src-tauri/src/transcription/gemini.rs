@@ -1,11 +1,12 @@
+use super::synthetic_words;
 use crate::asr::AsrPass;
 use crate::audio::pcm16_wav;
 use crate::credentials::{get_key, CloudProvider};
 use crate::metrics;
 use crate::model::{AppSettings, DictionaryKind};
-use crate::streaming::TimedWord;
 use crate::transcription::speech::detect_speech_window;
 use anyhow::{anyhow, Context, Result};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
@@ -16,6 +17,8 @@ const INTERACTIONS_URL: &str = "https://generativelanguage.googleapis.com/v1beta
 const FILES_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_UPLOAD_BYTES: usize = 125 * 1024 * 1024;
+// About two minutes at 16 kHz mono. Bound base64 and JSON allocations.
+const MAX_INLINE_WAV_BYTES: usize = 4 * 1024 * 1024;
 const MAX_VOCABULARY_TERMS: usize = 100;
 
 pub struct GeminiTranscriber {
@@ -71,36 +74,7 @@ impl GeminiTranscriber {
                 anyhow!("The saved Gemini API key is missing. Reconnect it in Voice settings.")
             })?;
         let started = Instant::now();
-        let uploaded = match self.upload_audio(&key, wav).await {
-            Ok(file) => file,
-            Err(error) => {
-                record_stage(
-                    started.elapsed().as_millis(),
-                    mode,
-                    error_outcome(&error),
-                    bucket,
-                );
-                return Err(error);
-            }
-        };
-
-        let result = self
-            .transcribe_uploaded(&key, &uploaded, settings, mode)
-            .await;
-        let delete_client = self.client.clone();
-        let delete_key = key;
-        let delete_name = uploaded.name.clone();
-        tauri::async_runtime::spawn(async move {
-            if Self::delete_uploaded_file(&delete_client, &delete_key, &delete_name)
-                .await
-                .is_err()
-            {
-                // File identifiers can be user-correlated provider data, so
-                // keep this warning content-free. Google automatically removes
-                // Files API uploads after 48 hours if immediate deletion fails.
-                tracing::warn!("Gemini audio upload could not be deleted immediately");
-            }
-        });
+        let result = self.transcribe_wav(&key, wav, settings, mode).await;
         let text = match result {
             Ok(text) => text,
             Err(error) => {
@@ -127,6 +101,36 @@ impl GeminiTranscriber {
             latency_ms: request_ms,
             timings_synthetic: true,
         })
+    }
+
+    async fn transcribe_wav(
+        &self,
+        key: &str,
+        wav: Vec<u8>,
+        settings: &AppSettings,
+        mode: &str,
+    ) -> Result<String> {
+        if let Some(audio) = inline_audio(&wav) {
+            return self.request_transcript(key, audio, settings, mode).await;
+        }
+        let file = self.upload_audio(key, wav).await?;
+        let audio = json!({"type":"audio","uri":file.uri,"mime_type":file.mime_type});
+        let result = self.request_transcript(key, audio, settings, mode).await;
+        let delete_client = self.client.clone();
+        let delete_key = key.to_owned();
+        let delete_name = file.name;
+        tauri::async_runtime::spawn(async move {
+            if Self::delete_uploaded_file(&delete_client, &delete_key, &delete_name)
+                .await
+                .is_err()
+            {
+                // File identifiers can be user-correlated provider data, so
+                // keep this warning content-free. Google automatically removes
+                // Files API uploads after 48 hours if immediate deletion fails.
+                tracing::warn!("Gemini audio upload could not be deleted immediately");
+            }
+        });
+        result
     }
 
     async fn upload_audio(&self, key: &str, wav: Vec<u8>) -> Result<UploadedFile> {
@@ -177,14 +181,14 @@ impl GeminiTranscriber {
             .map(|response| response.file)
     }
 
-    async fn transcribe_uploaded(
+    async fn request_transcript(
         &self,
         key: &str,
-        file: &UploadedFile,
+        audio: Value,
         settings: &AppSettings,
         mode: &str,
     ) -> Result<String> {
-        let body = interaction_body(file, settings, mode);
+        let body = interaction_body(audio, settings, mode);
         let response = self
             .client
             .post(INTERACTIONS_URL)
@@ -228,7 +232,15 @@ impl GeminiTranscriber {
     }
 }
 
-fn interaction_body(file: &UploadedFile, settings: &AppSettings, mode: &str) -> Value {
+fn inline_audio(wav: &[u8]) -> Option<Value> {
+    (wav.len() <= MAX_INLINE_WAV_BYTES).then(|| {
+        json!({
+            "type": "audio", "mime_type": "audio/wav", "data": STANDARD.encode(wav)
+        })
+    })
+}
+
+fn interaction_body(audio: Value, settings: &AppSettings, mode: &str) -> Value {
     let (vocabulary, truncated) = custom_vocabulary(settings);
     if truncated {
         tracing::warn!(
@@ -249,11 +261,7 @@ fn interaction_body(file: &UploadedFile, settings: &AppSettings, mode: &str) -> 
     }
     json!({
         "model": MODEL,
-        "input": [{
-            "type": "audio",
-            "uri": file.uri,
-            "mime_type": file.mime_type
-        }],
+        "input": [audio],
         "store": false,
         "generation_config": {"transcription_config": config}
     })
@@ -327,24 +335,6 @@ fn extract_output_text(payload: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn synthetic_words(text: &str, sample_count: usize) -> Vec<TimedWord> {
-    let pieces = text.split_whitespace().collect::<Vec<_>>();
-    let count = pieces.len() as u64;
-    if count == 0 {
-        return Vec::new();
-    }
-    let duration_ms = sample_count as u64 * 1_000 / crate::audio::WHISPER_SAMPLE_RATE as u64;
-    pieces
-        .into_iter()
-        .enumerate()
-        .map(|(index, word)| TimedWord {
-            text: word.to_owned(),
-            start_ms: duration_ms * index as u64 / count,
-            end_ms: duration_ms * (index as u64 + 1) / count,
-        })
-        .collect()
-}
-
 fn empty_pass() -> AsrPass {
     AsrPass {
         words: Vec::new(),
@@ -405,19 +395,19 @@ mod tests {
     use super::*;
     use crate::model::{DictionaryEntry, DictionaryKind};
 
-    fn file() -> UploadedFile {
-        UploadedFile {
-            name: "files/test".into(),
-            uri: "https://example.invalid/file".into(),
-            mime_type: "audio/wav".into(),
-        }
-    }
-
     #[test]
     fn dictation_is_verbatim_and_scribe_is_smart() {
         let settings = AppSettings::default();
-        let dictation = interaction_body(&file(), &settings, "dictation");
-        let scribe = interaction_body(&file(), &settings, "scribe");
+        let dictation = interaction_body(
+            json!({"type":"audio","uri":"https://example.invalid/file","mime_type":"audio/wav"}),
+            &settings,
+            "dictation",
+        );
+        let scribe = interaction_body(
+            json!({"type":"audio","uri":"https://example.invalid/file","mime_type":"audio/wav"}),
+            &settings,
+            "scribe",
+        );
         assert_eq!(
             dictation["generation_config"]["transcription_config"]["mode"]["type"],
             "verbatim"
@@ -427,6 +417,19 @@ mod tests {
             "smart"
         );
         assert_eq!(dictation["store"], false);
+    }
+
+    #[test]
+    fn typical_recordings_embed_wav_bytes_and_large_ones_use_files() {
+        let audio = inline_audio(b"RIFF").expect("short clip should need just one request");
+        let body = interaction_body(audio, &AppSettings::default(), "dictation");
+        assert_eq!(
+            body["input"][0],
+            json!({"type":"audio", "mime_type":"audio/wav", "data":"UklGRg=="})
+        );
+        let wav = vec![0; MAX_INLINE_WAV_BYTES + 1];
+        assert!(inline_audio(&wav[..MAX_INLINE_WAV_BYTES]).is_some());
+        assert!(inline_audio(&wav).is_none());
     }
 
     #[test]

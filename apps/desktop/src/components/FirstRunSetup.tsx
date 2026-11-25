@@ -44,7 +44,7 @@ export function FirstRunSetup({
   const percent = progressPercent(speech);
   const downloading = speech.phase === "downloading";
   const failed = speech.phase === "error" || speech.phase === "missing";
-  const cloudSpeech = speechProvider !== "local";
+  const cloudSpeech = speechProvider === "groq" || speechProvider === "gemini";
 
   return (
     <section className="first-run-setup" aria-labelledby="first-run-title">
@@ -108,8 +108,8 @@ export function FirstRunSetup({
             ) : null}
             {failed ? (
               <div className="setup-step__actions">
-                <button className="primary-button compact" type="button" onClick={cloudSpeech ? () => onOpenVoice("speech") : onRetrySpeech}>
-                  <RotateCcw size={13} /> {cloudSpeech ? "Connect speech provider" : "Retry download"}
+                <button className="primary-button compact" type="button" onClick={speechProvider === "local" ? onRetrySpeech : () => onOpenVoice("speech")}>
+                  <RotateCcw size={13} /> {speechProvider === "apple" ? "Open Voice" : cloudSpeech ? "Connect speech provider" : "Retry download"}
                 </button>
                 <button className="link-button" type="button" onClick={() => onOpenVoice("speech")}>
                   Voice settings
