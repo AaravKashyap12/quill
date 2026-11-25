@@ -12,7 +12,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/api": "^2.12.5",
     "lucide-react": "^0.468.0",
     "motion": "^13.0.0",
     "react": "^19.1.0",
