@@ -16,11 +16,15 @@ crate-type = ["staticlib", "rlib"]
 name = "quill"
 path = "src/main.rs"
 
+[target.'cfg(target_os = "macos")'.build-dependencies]
+cc = "1"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 arboard = "3.4"
 dirs = "6"
 hound = "3.5"

@@ -88,7 +88,7 @@ export async function detectProviders(): Promise<ProviderStatus[]> {
 
 export async function retryRecoveryTranscription(
   id: string,
-  provider: "groq" | "gemini" | "local",
+  provider: AppSettings["transcriptionProvider"],
 ): Promise<RecoveryManifest> {
   if (!isTauri()) throw new Error("Recovery transcription is available in the desktop app.");
   return invoke<RecoveryManifest>("retry_recovery_transcription", { id, provider });
@@ -168,6 +168,10 @@ export async function listInstalledWhisperModels(): Promise<string[]> {
       : ["base.en"];
   }
   return invoke<string[]>("list_installed_whisper_models");
+}
+
+export async function appleSpeechSupported(language: string): Promise<boolean> {
+  return isTauri() && invoke<boolean>("apple_speech_supported", { language });
 }
 
 export async function getSystemProfile(): Promise<SystemProfile> {

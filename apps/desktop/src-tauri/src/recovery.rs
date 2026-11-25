@@ -178,7 +178,32 @@ pub fn mark_provider_failure(id: &str, provider: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn load_audio_samples(id: &str) -> Result<Vec<f32>> {
+fn ensure_retry_provider(failed: Option<&str>, requested: &str) -> Result<()> {
+    if failed == Some("apple") && !matches!(requested, "apple" | "local") {
+        anyhow::bail!("Choose an on-device provider to retry this Apple Speech recording.");
+    }
+    Ok(())
+}
+
+pub fn finish_retry(id: &str, mode: Mode, transcript: &str) -> Result<RecoveryManifest> {
+    let dir = recovery_directory()?;
+    let _guard = RECOVERY_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+    finish_retry_in(&dir, id, mode, transcript)
+}
+
+fn finish_retry_in(dir: &Path, id: &str, mode: Mode, transcript: &str) -> Result<RecoveryManifest> {
+    let pending = load_pending_in(dir)?.context("No recovery checkpoint is available")?;
+    if pending.id != id {
+        anyhow::bail!("A newer recording replaced this recovery checkpoint");
+    }
+    if transcript.trim().is_empty() {
+        anyhow::bail!("No speech was recognized. The recording is available to retry.");
+    }
+    write_transcript_in(dir, id, mode, transcript, true)?;
+    load_pending_in(dir)?.context("The recovered transcript could not be reloaded")
+}
+
+pub fn load_audio_samples(id: &str, provider: &str) -> Result<Vec<f32>> {
     let dir = recovery_directory()?;
     let _guard = RECOVERY_MUTEX
         .lock()
@@ -187,6 +212,7 @@ pub fn load_audio_samples(id: &str) -> Result<Vec<f32>> {
     if manifest.id != id {
         anyhow::bail!("A newer recording replaced this recovery checkpoint");
     }
+    ensure_retry_provider(manifest.failed_provider.as_deref(), provider)?;
     let audio = dir.join(AUDIO_NAME);
     if !audio.exists() {
         anyhow::bail!("This recovery checkpoint does not contain audio");
@@ -563,6 +589,43 @@ mod tests {
             .expect("write ok");
         let loaded = load_pending_in(&dir).expect("load ok").expect("some");
         assert!(loaded.audio_path.is_none());
+    }
+
+    #[test]
+    fn apple_retries_are_local_and_empty_or_stale_retries_preserve_the_checkpoint() {
+        for provider in ["apple", "local"] {
+            assert!(ensure_retry_provider(Some("apple"), provider).is_ok());
+        }
+        for provider in ["groq", "gemini"] {
+            assert!(ensure_retry_provider(Some("apple"), provider).is_err());
+            assert!(ensure_retry_provider(Some(provider), provider).is_ok());
+        }
+        let dir = scratch_dir("retry-commit");
+        write_transcript_in(&dir, "current", Mode::Dictation, "", true).unwrap();
+        let mut manifest = load_pending_in(&dir).unwrap().unwrap();
+        manifest.failed_provider = Some("apple".into());
+        fs::write(
+            dir.join(MANIFEST_NAME),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert!(finish_retry_in(&dir, "current", Mode::Dictation, "  ").is_err());
+        assert!(finish_retry_in(&dir, "stale", Mode::Dictation, "old text").is_err());
+        assert_eq!(
+            load_pending_in(&dir)
+                .unwrap()
+                .unwrap()
+                .failed_provider
+                .as_deref(),
+            Some("apple")
+        );
+        assert_eq!(
+            finish_retry_in(&dir, "current", Mode::Dictation, "recovered")
+                .unwrap()
+                .transcript,
+            "recovered"
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

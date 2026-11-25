@@ -319,6 +319,7 @@ pub enum CleanupProvider {
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum TranscriptionProvider {
+    Apple,
     #[default]
     Local,
     Groq,

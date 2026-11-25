@@ -16,9 +16,10 @@ the issue requires Accessibility permissions.
   only when the user explicitly selects Groq or Gemini transcription;
   transcript text leaves the device only when the user explicitly selects
   Gemini cleanup.
-- Gemini transcription uploads the completed recording through Google's Files
-  API after shortcut release, requests deletion immediately after the
-  transcription attempt, and sets `store: false` on the interaction. Google
+- Gemini transcription sends audio after shortcut release with `store: false`.
+  Recordings up to 4 MiB of WAV audio travel in the transcription request.
+  For larger recordings Quill uses Google's Files API and requests file
+  deletion immediately after the transcription attempt. Google
   documents that a file can remain for up to 48 hours if immediate deletion
   does not succeed. Google may use free-tier content to improve its products;
   paid-tier content is excluded under Google's current API terms.

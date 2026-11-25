@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import { discardRecovery, getPendingRecovery, retryRecoveryTranscription } from "../tauri";
-import type { RecoveryManifest } from "../types";
+import type { AppSettings, RecoveryManifest } from "../types";
 
 function formatWhen(ms: number): string {
   const delta = Date.now() - ms;
@@ -24,6 +24,7 @@ function formatWhen(ms: number): string {
 }
 
 function providerLabel(provider: string | null): string {
+  if (provider === "apple") return "Apple Speech";
   if (provider === "groq") return "Groq";
   if (provider === "gemini") return "Gemini";
   return provider
@@ -43,7 +44,7 @@ export function RecoveryBanner() {
   const [pending, setPending] = useState<RecoveryManifest | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
-  const [retrying, setRetrying] = useState<"groq" | "gemini" | "local" | null>(null);
+  const [retrying, setRetrying] = useState<AppSettings["transcriptionProvider"] | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -77,6 +78,8 @@ export function RecoveryBanner() {
   }, []);
 
   if (!pending) return null;
+  const failed = pending.failedProvider;
+  const retryProvider = failed === "apple" || failed === "gemini" || failed === "groq" ? failed : null;
 
   const wordCount = pending.transcript.trim().split(/\s+/).filter(Boolean).length;
 
@@ -159,7 +162,7 @@ export function RecoveryBanner() {
     }
   }
 
-  async function retry(provider: "groq" | "gemini" | "local") {
+  async function retry(provider: AppSettings["transcriptionProvider"]) {
     if (!pending) return;
     setRetrying(provider);
     setStatus({ kind: "idle" });
@@ -170,7 +173,9 @@ export function RecoveryBanner() {
     } catch {
       setStatus({
         kind: "discard-failed",
-        error: provider === "local"
+        error: provider === "apple"
+          ? "Apple Speech could not finish this recording. Check your Mac’s Dictation language or try the local Whisper model."
+          : provider === "local"
           ? "Local transcription couldn't finish. Check that a speech model is installed and try again."
           : `${providerLabel(provider)} couldn't finish this recording. Check your connection and try again, or transcribe it locally.`,
       });
@@ -257,22 +262,11 @@ export function RecoveryBanner() {
       ) : null}
       {pending.failedProvider ? (
         <div className="recovery-banner__retry" aria-label="Recovery options">
-          <button
-            type="button"
-            className="ghost-button"
-            disabled={retrying !== null}
-            onClick={() =>
-              void retry(
-                pending.failedProvider?.toLowerCase() === "gemini"
-                  ? "gemini"
-                  : "groq",
-              )
-            }
-          >
-            {retrying === "gemini" || retrying === "groq"
-              ? `Retrying ${providerLabel(retrying)}…`
-              : `Retry ${providerLabel(pending.failedProvider)}`}
-          </button>
+          {retryProvider && (
+            <button type="button" className="ghost-button" disabled={retrying !== null} onClick={() => void retry(retryProvider)}>
+              {retrying === retryProvider ? "Retrying" : "Retry"} {providerLabel(retryProvider)}
+            </button>
+          )}
           <button type="button" className="ghost-button" disabled={retrying !== null} onClick={() => void retry("local")}>
             {retrying === "local" ? "Transcribing locally…" : "Transcribe locally"}
           </button>

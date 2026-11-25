@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Quill uses Apple Speech to transcribe on this Mac when you select it as your speech provider.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Quill needs microphone access to transcribe your speech. Audio is processed on this Mac or sent to the cloud provider you select.</string>
 </dict>

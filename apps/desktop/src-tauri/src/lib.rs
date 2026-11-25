@@ -260,7 +260,8 @@ async fn retry_recovery_transcription(
     if pending.id != id {
         return Err("A newer recording replaced this recovery checkpoint".to_owned());
     }
-    let samples = recovery::load_audio_samples(&id).map_err(|error| error.to_string())?;
+    let samples =
+        recovery::load_audio_samples(&id, &provider).map_err(|error| error.to_string())?;
     let settings = state
         .settings
         .read()
@@ -272,6 +273,8 @@ async fn retry_recovery_transcription(
         Mode::Dictation
     };
     let transcript = match provider.as_str() {
+        #[cfg(target_os = "macos")]
+        "apple" => transcription::transcribe_recovery_apple(settings, samples).await,
         "groq" => transcription::transcribe_recovery_groq(&settings, &samples).await,
         "gemini" => {
             transcription::transcribe_recovery_gemini(
@@ -289,10 +292,7 @@ async fn retry_recovery_transcription(
         _ => return Err("Unsupported recovery transcription provider".to_owned()),
     }
     .map_err(|error| error.to_string())?;
-    recovery::write_transcript(&id, mode, &transcript, true).map_err(|error| error.to_string())?;
-    recovery::load_pending()
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "The recovered transcript could not be reloaded".to_owned())
+    recovery::finish_retry(&id, mode, &transcript).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -770,6 +770,7 @@ pub fn run() {
             retry_recovery_transcription,
             list_audio_input_devices,
             list_installed_whisper_models,
+            transcription::apple_speech_supported,
             system_profile::get_system_profile,
             downloads::get_cuda_runtime_status,
             preview_mode,

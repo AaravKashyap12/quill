@@ -6,6 +6,9 @@ import type { AppSettings, ProviderKeyStatus } from "./types";
 export function speechSetupFor(
   settings: AppSettings, installed: string[], statuses: ProviderKeyStatus[],
 ): SpeechSetupState {
+  if (settings.transcriptionProvider === "apple") {
+    return { phase: "ready", modelId: "Apple Speech", bytesDownloaded: 0, bytesTotal: 0, error: null };
+  }
   if (settings.transcriptionProvider === "local") {
     return {
       phase: installed.includes(settings.whisperModel) ? "ready" : "missing",
